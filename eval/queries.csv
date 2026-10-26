@@ -1,0 +1,26 @@
+query_id,text,gold_max_price,gold_min_price,gold_category,gold_brand,gold_exclude,stratum,split
+q01,replacement water filter for my refrigerator under $25,25,,,,,price,dev
+q02,quiet portable countertop ice maker under $150,150,,Ice Makers,,,price,test
+q03,dryer heating element between $15 and $40,40,15,,,,price,test
+q04,range hood for a small kitchen under $200,200,,Range Hoods,,,price,dev
+q05,"water filters for my coffee maker, less than $10",10,,,,,price,test
+q06,dishwasher rack wheels under $12,12,,,,,price,test
+q07,heavy duty washer drain pump over $30,,30,,,,price,dev
+q08,genuine GE brand refrigerator water filter,,,,GE,,category_brand,dev
+q09,Frigidaire brand ice maker assembly,,,,FRIGIDAIRE,,category_brand,test
+q10,beverage refrigerator for cans and wine,,,Beverage Refrigerators,,,category_brand,test
+q11,countertop dishwasher for a small apartment,,,Countertop Dishwashers,,,category_brand,test
+q12,"compatible water filter for a Samsung fridge, any brand is fine",,,,,,category_brand,dev
+q13,something to stop my dryer from squeaking,,,,,,descriptive,dev
+q14,remove chlorine taste from the water in my coffee machine,,,,,,descriptive,test
+q15,make chewable nugget ice at home for parties,,,,,,descriptive,test
+q16,my washing machine will not drain and I need the part that pumps the water out,,,,,,descriptive,dev
+q17,replacement wick filter for my bedroom humidifier,,,,,,descriptive,test
+q18,"refrigerator water filter, not Samsung",,,,,samsung,negation,dev
+q19,portable ice maker that is not stainless steel,,,Ice Makers,,stainless,negation,test
+q20,reusable coffee filter without paper,,,,,paper,negation,test
+q21,3387134 cycling thermostat,,,,,,exact_term,dev
+q22,W10425238 drain pump,,,,,,exact_term,test
+q23,Samsung range hood under $20,20,,Range Hoods,SAMSUNG,,no_result,dev
+q24,Bosch countertop dishwasher,,,Countertop Dishwashers,BOSCH,,no_result,test
+q25,LG freezer under $50,50,,Freezers,LG,,no_result,test

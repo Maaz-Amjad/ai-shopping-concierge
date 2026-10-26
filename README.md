@@ -23,7 +23,8 @@ Work in progress; deadline 28 Oct 2026. Design decisions and deviations will be 
 | 0 Plan ([intent](intent/intent.md)) | done |
 | 1 Scaffold, shared LLM client, guardrails | done |
 | 2 Data: `src/data.py`, [01_eda](notebooks/01_eda.ipynb) | done: 10,000 products, 24 categories, 24% without price |
-| 3-10 Embeddings, parsing, evaluation, personalization, generation, report | planned |
+| 3 Embeddings + baselines: `src/embed.py`, `src/retrieve.py`, [02_baselines](notebooks/02_baselines.ipynb) | done: S1 TF-IDF, S2 BM25, S3 dense; S4/S5 primitives |
+| 4-10 Parsing, evaluation, personalization, generation, report | planned |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -57,6 +58,7 @@ B=https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main
 curl -L -o data/raw/meta_Appliances.jsonl "$B/raw/meta_categories/meta_Appliances.jsonl"          # 285 MB
 curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/Appliances.csv"   # 122 MB
 .venv/Scripts/python.exe -m src.data     # -> data/processed/, eval/results/cleaning_log.json
+.venv/Scripts/python.exe -m src.embed    # -> artifacts/embeddings.npy (~27 min on CPU, minutes on a GPU)
 ```
 
 ## Repository layout
