@@ -22,7 +22,7 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src import ROOT, load_config, set_seed
 from src.parse import ParsedQuery
@@ -396,6 +396,9 @@ def judge_pool(pool: pd.DataFrame, queries: pd.DataFrame, catalog: pd.DataFrame,
         except (CallLimitReached, QuotaExhausted) as exc:
             notes.append(f"stopped at {qid}: {exc}")
             break
+        except ValidationError as exc:      # e.g. truncated JSON; not cached, so a rerun retries it
+            notes.append(f"{qid}: invalid judge output ({str(exc).splitlines()[0][:120]}); skipped")
+            continue
         for pid in products["product_id"]:
             if pid in grades:
                 rows.append({"query_id": qid, "product_id": pid, "grade": grades[pid]})
