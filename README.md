@@ -25,7 +25,8 @@ Work in progress; deadline 28 Oct 2026. Design decisions and deviations will be 
 | 2 Data: `src/data.py`, [01_eda](notebooks/01_eda.ipynb) | done: 10,000 products, 24 categories, 24% without price |
 | 3 Embeddings + baselines: `src/embed.py`, `src/retrieve.py`, [02_baselines](notebooks/02_baselines.ipynb) | done: S1 TF-IDF, S2 BM25, S3 dense; S4/S5 primitives |
 | 4 Query parsing + hard filters: `src/parse.py`, `src/filters.py` | done: Gemini parser (prompt v2, tuned on dev), S4 post-filter and S5 filter-first |
-| 5-10 Evaluation, personalization, generation, report | planned |
+| 5 Evaluation harness: `src/evaluate.py` | done: metrics with bootstrap CIs; S1-S5 run on all 25 queries; dev parse F1 0.80 (prompt v1) -> 1.00 (v2) |
+| 6-10 Relevance labels, personalization, generation, report | planned |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -36,6 +37,7 @@ Work in progress; deadline 28 Oct 2026. Design decisions and deviations will be 
 | S3 | Dense BGE + FAISS, no filters |
 | S4 | Dense + post-filter (approved proposal design) |
 | S5 | Dense + filter-first |
+| S5x | S5 + exclusion terms ("not stainless"), reported separately |
 | S6 | S5 + personalization |
 
 Metrics: Precision@K, pooled Recall@K, NDCG@K, constraint adherence, parse F1, grounding rate, latency,
@@ -60,6 +62,8 @@ curl -L -o data/raw/meta_Appliances.jsonl "$B/raw/meta_categories/meta_Appliance
 curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/Appliances.csv"   # 122 MB
 .venv/Scripts/python.exe -m src.data     # -> data/processed/, eval/results/cleaning_log.json
 .venv/Scripts/python.exe -m src.embed    # -> artifacts/embeddings.npy (~27 min on CPU, minutes on a GPU)
+.venv/Scripts/python.exe -m src.parse --split dev    # Gemini, cached; also --split test
+.venv/Scripts/python.exe -m src.evaluate --split dev # S1-S5 runs, no LLM calls -> eval/results/runs.csv
 ```
 
 ## Repository layout
