@@ -1,0 +1,16 @@
+# Environment and secrets
+.venv/
+.env
+.env.*
+!.env.example
+
+# Data, caches, model artifacts
+artifacts/
+data/raw/
+data/processed/
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Editor settings (local)
+.vscode/
