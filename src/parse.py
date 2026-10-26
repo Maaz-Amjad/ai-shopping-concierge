@@ -7,8 +7,8 @@ into eval/results/parsed_queries_<split>.jsonl.
 from __future__ import annotations
 
 import argparse
-import difflib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +22,6 @@ from src.llm import CallLimitReached, LLMClient, QuotaExhausted
 # (4/10 dev queries), which would drop 23% of washer drain pumps filed under "Washers & Dryers".
 PROMPT_VERSION = "parse-v2"
 N_PROMPT_BRANDS = 60        # most frequent brands listed in the prompt (spec 7.2)
-FUZZY_CUTOFF = 0.85         # difflib ratio needed to accept a near-miss category/brand
 RESULTS_DIR = ROOT / "eval" / "results"
 
 
@@ -115,18 +114,28 @@ Query: {query}
 JSON:"""
 
 
+def _normalize(text: str) -> str:
+    """Spelling-insensitive key: case, punctuation, '&' vs 'and', and a plural 's' are ignored."""
+    words = re.findall(r"[a-z0-9]+", text.casefold().replace("&", " and "))
+    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words)
+
+
 def _match(value: str | None, valid: list[str], label: str, log: list[str]) -> str | None:
-    """Map `value` to a catalog value (case-insensitive, then fuzzy); drop and log otherwise."""
+    """Map `value` to a catalog value: exact (case-insensitive), then normalized spelling; drop otherwise.
+
+    No similarity-ratio fuzzy matching: it mapped "Microwave Parts" to "Oven Parts", i.e. it guessed.
+    """
     if value is None or not str(value).strip():
         return None
-    lookup = {v.casefold(): v for v in valid}
-    key = str(value).strip().casefold()
-    if key in lookup:
-        return lookup[key]
-    close = difflib.get_close_matches(key, list(lookup), n=1, cutoff=FUZZY_CUTOFF)
-    if close:
-        log.append(f"{label} '{value}' fuzzy-matched to '{lookup[close[0]]}'")
-        return lookup[close[0]]
+    key = str(value).strip()
+    exact = {v.casefold(): v for v in valid}
+    if key.casefold() in exact:
+        return exact[key.casefold()]
+    normalized = {_normalize(v): v for v in valid}
+    if _normalize(key) in normalized:
+        match = normalized[_normalize(key)]
+        log.append(f"{label} '{value}' fuzzy-matched to '{match}' (spelling variant only)")
+        return match
     log.append(f"{label} '{value}' not in catalog; dropped")
     return None
 
