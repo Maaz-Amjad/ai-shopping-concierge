@@ -1,0 +1,22 @@
+{
+  "dataset": "Appliances",
+  "raw_items": 94327,
+  "dropped_duplicate_or_missing_id": 0,
+  "dropped_empty_title": 9,
+  "dropped_short_text": 12823,
+  "dropped_duplicate_title": 4322,
+  "eligible_items": 77173,
+  "kept_top_n": 10000,
+  "price_invalid_set_null": 0,
+  "price_outliers_set_null": 8,
+  "price_outlier_cap": 1819.24,
+  "price_missing": 2392,
+  "items_mapped_to_other_category": 176,
+  "n_categories": 24,
+  "brand_missing": 7,
+  "raw_interactions": 2103990,
+  "catalog_interactions": 1645944,
+  "kept_interactions": 24103,
+  "kept_users": 3995,
+  "users_with_10_plus": 185
+}
