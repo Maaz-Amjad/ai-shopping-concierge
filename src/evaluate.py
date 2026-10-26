@@ -88,7 +88,7 @@ def violates_exclusion(item: pd.Series, gold: pd.Series) -> bool:
     """True if title or features contain the gold excluded term (reported separately, spec 8.3)."""
     if _blank(gold["gold_exclude"]):
         return False
-    text = f"{item['title'] or ''} {item['features'] or ''}".lower()
+    text = " ".join("" if _blank(item[c]) else str(item[c]) for c in ("title", "features")).lower()
     return str(gold["gold_exclude"]).lower() in text
 
 
