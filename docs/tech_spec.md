@@ -1,6 +1,6 @@
 # Technical Specification: AI-Powered Semantic Product Discovery, Personalized Recommendation & Conversational Shopping Concierge
 
-Prepared by Maaz Amjad | atomcamp AI Bootcamp Final Project (NLP/LLM track) | Draft v0.1 | 5 October 2026 | Companion to the Requirements Document
+Prepared by Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | 5 October 2026
 
 ## 1. Overview
 

@@ -1,7 +1,5 @@
 # Semantic Product Discovery & Shopping Concierge
 
-atomcamp AI Bootcamp final project (NLP/LLM track) by Maaz Amjad.
-
 Keyword search misses products described in different words, does not reliably enforce limits like
 "under $80", and rarely explains its picks. This project builds and evaluates an end-to-end pipeline
 over one Amazon product catalog:

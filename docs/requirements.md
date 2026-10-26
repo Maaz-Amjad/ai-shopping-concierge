@@ -1,6 +1,6 @@
 # Requirements Document: AI-Powered Semantic Product Discovery, Personalized Recommendation & Conversational Shopping Concierge
 
-Prepared by Maaz Amjad | atomcamp AI Bootcamp Final Project (NLP/LLM track) | Draft v0.1 | 5 October 2026 | Status: draft, pending trainer approval of the proposal
+Prepared by Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | 5 October 2026
 
 ## 1. Document Purpose
 
@@ -232,12 +232,3 @@ Priority uses MoSCoW: **M** Must, **S** Should, **C** Could.
 | 8 | Grounded generation and grounding validator |
 | 9 | Ablations, confidence intervals, error analysis |
 | 10 | README, report, slides, demo video, optional Streamlit |
-
-## 14. Open Questions
-
-1. Has the trainer approved the proposal, or are revisions required?
-2. What are the final submission and presentation dates?
-3. What report format and length does atomcamp expect?
-4. Which dataset and category subset will be used after profiling?
-5. Which LLM provider and model, and what spending cap?
-6. Is the project strictly individual?
