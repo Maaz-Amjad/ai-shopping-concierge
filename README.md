@@ -24,7 +24,8 @@ Work in progress; deadline 28 Oct 2026. Design decisions and deviations will be 
 | 1 Scaffold, shared LLM client, guardrails | done |
 | 2 Data: `src/data.py`, [01_eda](notebooks/01_eda.ipynb) | done: 10,000 products, 24 categories, 24% without price |
 | 3 Embeddings + baselines: `src/embed.py`, `src/retrieve.py`, [02_baselines](notebooks/02_baselines.ipynb) | done: S1 TF-IDF, S2 BM25, S3 dense; S4/S5 primitives |
-| 4-10 Parsing, evaluation, personalization, generation, report | planned |
+| 4 Query parsing + hard filters: `src/parse.py`, `src/filters.py` | done: Gemini parser (prompt v2, tuned on dev), S4 post-filter and S5 filter-first |
+| 5-10 Evaluation, personalization, generation, report | planned |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 

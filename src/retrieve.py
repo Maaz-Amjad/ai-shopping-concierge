@@ -17,6 +17,11 @@ import pandas as pd
 from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+from src.filters import build_mask, has_price_filter, unpriced_mask
+from src.parse import ParsedQuery
+
+MODES = ("dense", "post_filter", "filter_first")  # S3, S4, S5
+
 # Keeps part numbers intact: "w10425238", "da61-06796a", "4.6".
 TOKEN_PATTERN = r"[a-z0-9]+(?:[-.][a-z0-9]+)*"
 _TOKEN_RE = re.compile(TOKEN_PATTERN)
@@ -96,13 +101,54 @@ class DenseIndex:
                     k0: int = 100, k_max: int = 1000) -> tuple[pd.DataFrame, int]:
         """S4 (proposal design): retrieve K, keep rows passing `mask`; double K until >= n survive or K hits k_max.
 
-        Returns the surviving top-n and the K that was finally used.
+        Returns all survivors within the final K (the candidate pool) and the K that was used.
         """
         k = k0
         while True:
             hits = self.search(query_vec, min(k, len(self.embeddings)))
-            kept = hits[mask[hits["row"].to_numpy()]].head(n).reset_index(drop=True)
+            kept = hits[mask[hits["row"].to_numpy()]].reset_index(drop=True)
             if len(kept) >= n or k >= k_max:
                 kept["rank"] = np.arange(1, len(kept) + 1)
                 return kept, min(k, k_max)
             k = min(k * 2, k_max)
+
+
+@dataclass
+class RetrievalResult:
+    """Candidates plus the facts the evaluation and the answer need."""
+
+    candidates: pd.DataFrame            # row, score, rank (best first)
+    n_satisfying: int                   # products passing every hard constraint
+    price_excluded: int                 # products dropped only because their price is missing
+    unpriced: pd.DataFrame              # "price not listed" fallback list (never ranked or scored)
+    k_used: int | None = None           # post-filter only: the K finally searched
+
+
+def retrieve(pq: ParsedQuery, mode: str, pool_size: int, *, catalog: pd.DataFrame, index: DenseIndex,
+             query_vec: np.ndarray, n: int = 5, k0: int = 100, k_max: int = 1000,
+             use_exclusions: bool = True) -> RetrievalResult:
+    """Retrieve candidates for a parsed query (spec 11).
+
+    mode: "dense" (S3, filters ignored), "post_filter" (S4), "filter_first" (S5).
+    `query_vec` must encode the text that mode uses (raw query for S3, pq.semantic_query otherwise).
+    The unpriced fallback list is filled only when a price filter leaves fewer than `n` candidates.
+    """
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+    mask = build_mask(catalog, pq, use_exclusions)
+    no_price_filter = build_mask(catalog, pq.model_copy(update={"max_price": None, "min_price": None}),
+                                 use_exclusions)
+    price_excluded = int((no_price_filter & catalog["price"].isna().to_numpy()).sum()) \
+        if has_price_filter(pq) else 0
+    k_used = None
+    if mode == "dense":
+        cands = index.search(query_vec, pool_size)
+    elif mode == "post_filter":
+        cands, k_used = index.post_filter(query_vec, mask, n=n, k0=k0, k_max=k_max)
+        cands = cands.head(pool_size)
+    else:
+        cands = index.filter_first(query_vec, mask, pool_size)
+    unpriced = pd.DataFrame(columns=["row", "score", "rank"])
+    if mode != "dense" and has_price_filter(pq) and len(cands) < n:
+        unpriced = index.filter_first(query_vec, unpriced_mask(catalog, pq, use_exclusions), n)
+    return RetrievalResult(cands, int(mask.sum()), price_excluded, unpriced, k_used)

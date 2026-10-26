@@ -1,9 +1,11 @@
 """Tests for src/retrieve.py on small synthetic data."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from src.retrieve import BM25Retriever, DenseIndex, TfidfRetriever, tokenize, top_k
+from src.parse import ParsedQuery
+from src.retrieve import BM25Retriever, DenseIndex, TfidfRetriever, retrieve, tokenize, top_k
 
 DOCS = [
     "Whirlpool dryer belt W10198086 replacement",
@@ -86,3 +88,60 @@ def test_post_filter_returns_short_list_at_k_max():
     assert k_used == 300 and kept.empty
     # Filter-first still finds it: the gap S5 is meant to close.
     assert DenseIndex(emb).filter_first(q, mask, k=5)["row"].tolist() == [order[350]]
+
+
+# ---- retrieve() entry point (S3/S4/S5) -------------------------------------------------
+
+
+def small_catalog(n: int = 40) -> pd.DataFrame:
+    price = np.where(np.arange(n) % 4 == 0, np.nan, 10.0 + np.arange(n))
+    return pd.DataFrame({"title": [f"item {i}" for i in range(n)], "features": [""] * n,
+                         "category": ["A" if i < 20 else "B" for i in range(n)],
+                         "brand": ["X"] * n, "price": price})
+
+
+def test_retrieve_modes_respect_or_ignore_filters():
+    cat, emb = small_catalog(), unit_rows(40)
+    index, qv = DenseIndex(emb), emb[25]
+    pq = ParsedQuery(semantic_query="x", category="A", max_price=25)
+    allowed = set(np.flatnonzero((cat.category == "A") & (cat.price <= 25)))
+    s5 = retrieve(pq, "filter_first", 200, catalog=cat, index=index, query_vec=qv)
+    assert set(s5.candidates.row) == allowed and s5.n_satisfying == len(allowed)
+    s4 = retrieve(pq, "post_filter", 200, catalog=cat, index=index, query_vec=qv, k0=10, k_max=40)
+    assert set(s4.candidates.row) <= allowed and s4.k_used in (10, 20, 40)
+    s3 = retrieve(pq, "dense", 5, catalog=cat, index=index, query_vec=qv)
+    assert s3.candidates.row.tolist()[0] == 25  # ignores filters: row 25 is category B
+
+
+def test_retrieve_reports_price_exclusions_and_unpriced_fallback():
+    cat, emb = small_catalog(), unit_rows(40)
+    pq = ParsedQuery(semantic_query="x", category="A", max_price=12)  # only rows 1, 2 qualify
+    res = retrieve(pq, "filter_first", 200, catalog=cat, index=DenseIndex(emb), query_vec=emb[0], n=5)
+    assert sorted(res.candidates.row) == [1, 2]
+    assert res.price_excluded == 5                       # rows 0, 4, 8, 12, 16 have no price
+    assert sorted(res.unpriced.row) == [0, 4, 8, 12, 16]
+    assert not set(res.unpriced.row) & set(res.candidates.row)
+    roomy = retrieve(pq.model_copy(update={"max_price": 100}), "filter_first", 200, catalog=cat,
+                     index=DenseIndex(emb), query_vec=emb[0], n=5)
+    assert roomy.unpriced.empty                          # enough priced results -> no fallback list
+
+
+def test_post_filter_widens_k_until_n_survive_for_top10_eval():
+    emb = unit_rows(1000, seed=7)
+    q = emb[0]
+    order = np.argsort(-(emb @ q), kind="stable")
+    mask = np.zeros(1000, dtype=bool)
+    mask[order[::30]] = True  # one allowed row every 30 dense ranks -> ~3 per 100
+    kept, k_used = DenseIndex(emb).post_filter(q, mask, n=10, k0=100, k_max=1000)
+    assert len(kept) >= 10 and k_used == 400  # 100 -> 200 -> 400 needed for 10 survivors
+    cat = pd.DataFrame({"title": ["t"] * 1000, "features": [""] * 1000, "category": ["A"] * 1000,
+                        "brand": ["X"] * 1000, "price": np.where(mask, 10.0, 99.0)})
+    res = retrieve(ParsedQuery(semantic_query="x", max_price=10), "post_filter", 200, catalog=cat,
+                   index=DenseIndex(emb), query_vec=q, n=10)
+    assert len(res.candidates) >= 10 and res.k_used == 400
+
+
+def test_retrieve_rejects_unknown_mode():
+    with pytest.raises(ValueError):
+        retrieve(ParsedQuery(semantic_query="x"), "magic", 5, catalog=small_catalog(),
+                 index=DenseIndex(unit_rows(40)), query_vec=unit_rows(1)[0])
