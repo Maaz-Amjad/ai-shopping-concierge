@@ -7,6 +7,8 @@ llm:
   provider: gemini
   model: gemini-3.5-flash-lite        # parser and generator
   judge_model: gemini-3.8-flash       # relevance judge (must differ from generator)
+  judge_rpm: 4                        # free tier: 5 RPM, 250K TPM, 20 RPD (AI Studio, 27 Oct)
+  judge_max_output_tokens: 8192       # one call grades up to ~40 products; thinking tokens count too
   temperature: 0
   max_output_tokens: 400
   rpm: 10                             # global client-side rate limit
