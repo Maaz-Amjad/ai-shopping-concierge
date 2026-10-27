@@ -486,7 +486,7 @@ def run_judge(cfg: dict, limit: int | None) -> None:
             human_grade="")
         sheet.to_csv(sheet_path, index=False)
         print(f"wrote {sheet_path.relative_to(ROOT)}: {len(sheet)} pairs ({len(sheet) / len(pool):.0%} of the pool), "
-              f"strata {sheet.stratum.value_counts().sort_index().to_dict()} (judge grades hidden)")
+              f"strata {dict((str(k), int(v)) for k, v in sheet.stratum.value_counts().sort_index().items())} (judge grades hidden)")
 
 
 def run_qrels() -> None:
