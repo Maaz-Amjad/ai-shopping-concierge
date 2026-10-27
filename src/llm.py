@@ -17,6 +17,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 from pydantic import BaseModel
 
 from src import ROOT
@@ -25,6 +26,8 @@ from src import ROOT
 Transport = Callable[[str, str, type[BaseModel] | None, float, int], str]
 
 RETRYABLE_CODES = {429, 500, 502, 503, 504}
+# Judge calls with thinking take up to ~5 min; without a timeout a stalled request hung for 8 h (27 Oct).
+REQUEST_TIMEOUT_MS = 10 * 60 * 1000
 # Free-tier daily quotas reset at midnight Pacific. PDT (UTC-7) holds until 1 Nov 2026.
 QUOTA_DAY_TZ = timezone(timedelta(hours=-7))
 
@@ -47,7 +50,8 @@ def gemini_transport(model: str, prompt: str, schema: type[BaseModel] | None,
     from google.genai import types
 
     load_dotenv(ROOT / ".env")
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+                          http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
     config = types.GenerateContentConfig(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
@@ -151,7 +155,8 @@ class LLMClient:
                 self._log_call(prompt_version, f"error {code}")
                 if code == 429 and _is_daily_quota(exc):
                     raise QuotaExhausted(f"daily quota exhausted for {self.model}") from exc
-                if code not in RETRYABLE_CODES:
+                # Dropped connections and timeouts have no status code but are transient.
+                if code not in RETRYABLE_CODES and not isinstance(exc, httpx.TransportError):
                     raise
                 if attempt == self.max_attempts:
                     if code == 429:
