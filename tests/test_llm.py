@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -90,6 +91,36 @@ def test_daily_quota_stops_immediately(tmp_path):
     with pytest.raises(QuotaExhausted):
         client.generate("p", "v1")
     assert transport.calls == 1
+
+
+def test_dropped_connection_is_retried(tmp_path):
+    # 27 Oct: "Server disconnected without sending a response" crashed the judge run.
+    dropped = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+    client = make_client(tmp_path, FakeTransport([dropped, '{"value": 4}']))
+    assert client.generate_json("p", "v1", Echo).value == 4
+    assert client.calls_made == 2
+
+
+def test_gemini_transport_sets_a_request_timeout(monkeypatch):
+    # 27 Oct: a judge request hung for 8 hours because no timeout was set.
+    from google import genai
+    seen = {}
+
+    class FakeModels:
+        def generate_content(self, model, contents, config):
+            return type("R", (), {"text": "ok"})()
+
+    class FakeGenaiClient:
+        def __init__(self, **kw):
+            seen.update(kw)
+            self.models = FakeModels()
+
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(genai, "Client", FakeGenaiClient)
+    assert llm.gemini_transport("m", "p", None, 0.0, 10) == "ok"
+    timeout = seen["http_options"].timeout
+    assert timeout is not None and 0 < timeout <= 15 * 60 * 1000          # milliseconds
 
 
 def test_non_retryable_error_is_raised(tmp_path):
