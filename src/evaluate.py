@@ -322,7 +322,7 @@ def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequen
 
     Returns (runs: S5 and S6 top-`depth`, system label "S6|user|w_sem,w_pers,w_pop" for S6;
     shift: one row per (user, weights, query) with Kendall tau between the S5 and S6 order of the
-    whole pool and the top-`depth` overlap).
+    whole pool and the top-10 overlap). Use depth > 10 when judged-only (condensed) metrics are needed.
     """
     from scipy.stats import kendalltau
 
@@ -363,10 +363,13 @@ def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequen
                                      "rank": int(c.rank), "product_id": c.product_id, "score": float(c.final)})
                 tau = kendalltau([s5_rank[x] for x in ranked["row"]], ranked["rank"]).statistic if len(pool) > 1 \
                     else float("nan")
-                top_s5 = set(pool.head(depth)["row"])
+                top_s5 = set(pool.head(10)["row"])
                 shift_rows.append({"query_id": qid, "user_id": user, "weights": label, "kendall_tau": tau,
-                                   f"overlap@{depth}": len(top_s5 & set(ranked.head(depth)["row"])) / min(depth, len(pool))})
+                                   "overlap@10": len(top_s5 & set(ranked.head(10)["row"])) / min(10, len(pool))})
     return pd.DataFrame(run_rows), pd.DataFrame(shift_rows)
+
+
+CONDENSE_DEPTH = 50  # runs scored judged-only are this deep, so judged items below rank 10 can move up
 
 
 def judged_only(runs: pd.DataFrame, qrels: pd.DataFrame) -> pd.DataFrame:
@@ -622,7 +625,7 @@ def run_sensitivity(cfg: dict) -> pd.DataFrame:
     dev = queries[queries["split"] == "dev"]
     users = pick_users(load_interactions(), n=8, min_interactions=10, seed=cfg["seed"])
     grid = [(round(1 - wp - wo, 2), wp, wo) for wp in (0.0, 0.1, 0.25, 0.5) for wo in (0.0, 0.05, 0.1)]
-    runs, shift = run_s6(dev, load_parsed(), cfg, users, weights_grid=grid, depth=10)
+    runs, shift = run_s6(dev, load_parsed(), cfg, users, weights_grid=grid, depth=CONDENSE_DEPTH)
     qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
     a = experiment_a(runs, shift, qrels[qrels["query_id"].isin(dev["query_id"])])
     out = a.groupby("weights").agg(delta_ndcg_judged_only=("delta_NDCG@10_judged_only", "mean"),
@@ -667,7 +670,7 @@ def run_prefix(cfg: dict) -> pd.DataFrame:
     for flag in (True, False):
         c = copy.deepcopy(cfg)
         c["embedding"]["query_instruction"] = flag
-        runs, _ = run_systems(dev, parsed, c, systems=("S3", "S4", "S5"), depth=10)
+        runs, _ = run_systems(dev, parsed, c, systems=("S3", "S4", "S5"), depth=CONDENSE_DEPTH)
         full = ranking_metrics(runs, qrels, ks=(10,)).groupby("system")["NDCG@10"].mean()
         cond = ranking_metrics(judged_only(runs, qrels), qrels, ks=(10,)).groupby("system")["NDCG@10"].mean()
         unj = unjudged_share(runs, qrels)

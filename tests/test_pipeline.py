@@ -66,3 +66,20 @@ def test_respond_parses_with_llm_and_reports_no_result(tmp_path):
     assert out.parsed_query.max_price == 50 and out.ranked.empty
     assert out.flags["price_excluded"] == 1 and out.answer.fallback == "no_result"
     assert "Removing the price constraint would give 1 matching products." in out.answer.text
+
+
+def test_five_queries_end_to_end(tmp_path):
+    """Spec 13 integration test: five queries, cached/fake LLM, every path returns a usable answer."""
+    pqs = [ParsedQuery(semantic_query="ice maker"),                                     # no filters
+           ParsedQuery(semantic_query="ice maker", brand="LG"),                         # brand filter
+           ParsedQuery(semantic_query="ice maker", max_price=110),                      # price filter
+           ParsedQuery(semantic_query="hood", category="Range Hoods", max_price=50),    # unpriced only
+           None]                                                                        # parser fallback
+    res = resources(tmp_path, [gen(["A", "B"]), gen(["B"], "One LG ice maker."), gen(["A"], "One under $110."),
+                               "not json", "still not json", gen(["A", "B"])])
+    outs = [respond("q", res, parsed=pq) for pq in pqs]
+    assert [o.ranked["product_id"].tolist() for o in outs] == [["A", "B"], ["B"], ["A"], [], ["A", "B"]]
+    assert [o.answer.fallback for o in outs] == [None, None, None, "no_result", None]
+    assert "Price not listed (cannot confirm they fit your budget):\n- hood c by GE" in outs[3].answer.text
+    assert outs[4].flags["parser_fallback"] and outs[4].parsed_query.semantic_query == "q"
+    assert all(o.answer.text for o in outs)

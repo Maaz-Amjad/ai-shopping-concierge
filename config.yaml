@@ -1,6 +1,6 @@
 seed: 42
 dataset: {name: amazon_reviews_2023, category: Appliances, max_items: 10000, min_user_interactions: 5}
-embedding: {model: BAAI/bge-small-en-v1.5, query_instruction: true, batch_size: 64}   # prefix beat none on dev: S5 NDCG@10 0.795 vs 0.680 (28 Oct)
+embedding: {model: BAAI/bge-small-en-v1.5, query_instruction: true, batch_size: 64}   # dev S5 judged-only NDCG@10 (depth-50 condensed): prefix 0.795 vs none 0.785 (28 Oct)
 retrieval: {mode: filter_first, k0: 100, k_max: 1000, pool_size: 200}
 ranking: {w_sem: 0.7, w_pers: 0.25, w_pop: 0.05}
 llm:

@@ -11,7 +11,7 @@ import pandas as pd
 
 from src import ROOT, load_config, set_seed
 from src.filters import relaxation_suggestions
-from src.generate import GenerationResult, generate_answer
+from src.generate import MAX_WORDS, GenerationResult, answer_text, generate_answer, unpriced_section
 from src.llm import LLMClient
 from src.parse import CatalogMeta, ParsedQuery, parse_query
 from src.personalize import Weights, build_profiles, rank
@@ -100,6 +100,8 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     items = res.catalog.iloc[ranked["row"].to_numpy()].reset_index(drop=True)
     suggestions = relaxation_suggestions(res.catalog, parsed) if items.empty else None
     answer = generate_answer(query, parsed, items, res.client, res.brands, n_requested=n, suggestions=suggestions)
+    if not result.unpriced.empty:
+        answer.text += "\n" + unpriced_section(res.catalog.iloc[result.unpriced["row"].to_numpy()])
     timings["generate"] = (time.perf_counter() - t) * 1000
     timings["total"] = sum(timings.values())
     flags.update(generation_fallback=answer.fallback, grounding_errors=answer.errors)
@@ -133,7 +135,8 @@ def generation_benchmark(limit: int | None, cfg: dict | None = None) -> pd.DataF
             "bad_brands": sum(e.startswith("brand ") for e in first),
             "invalid_json": sum(e.startswith("invalid JSON") for e in first),
             "llm_errors": sum(e.startswith("LLM error") for e in first),
-            "answer_words": word_count(a.text), "errors": json.dumps(a.errors),
+            "answer_words": word_count(a.text), "over_max_words": word_count(a.text) > MAX_WORDS,
+            "llm_words": word_count(answer_text(a.answer)) if a.answer else 0, "errors": json.dumps(a.errors),
             "ranked_ids": json.dumps(out.ranked["product_id"].tolist()),
             "recommended_ids": json.dumps([r.product_id for r in a.answer.recommendations] if a.answer else []),
             "answer": a.text, **{f"{k}_ms": round(v, 1) for k, v in out.timings_ms.items()},
@@ -148,7 +151,8 @@ def generation_benchmark(limit: int | None, cfg: dict | None = None) -> pd.DataF
           f"{int(llm_rows.grounded_final.sum())}/{len(llm_rows)} | rejected attempts: invented ids "
           f"{int(df.bad_ids.sum())}, price mismatches {int(df.bad_prices.sum())}, brand mismatches "
           f"{int(df.bad_brands.sum())}, invalid JSON {int(df.invalid_json.sum())}, API errors {int(df.llm_errors.sum())}")
-    print(f"answer words: median {df.answer_words.median():.0f}, max {df.answer_words.max()} | "
+    print(f"answer words: median {df.answer_words.median():.0f}, max {df.answer_words.max()}, over {MAX_WORDS}: "
+          f"{int(df.over_max_words.sum())} | LLM-written words max {df.llm_words.max()} | "
           f"generate ms median {df.generate_ms.median():.0f}, p95 {df.generate_ms.quantile(0.95):.0f}")
     return df
 

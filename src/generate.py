@@ -20,6 +20,7 @@ from src.parse import ParsedQuery
 PROMPT_VERSION = "generate-v1"
 MAX_FEATURES = 5
 MAX_WORDS = 120
+TITLE_WORDS = 10                 # rendered titles are shortened; Amazon titles run to 40+ words (NFR-8)
 
 _DOLLAR_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
 
@@ -45,6 +46,11 @@ class GenerationResult:
 
 def _blank(x: object) -> bool:
     return x is None or (isinstance(x, float) and pd.isna(x)) or (isinstance(x, str) and not x.strip())
+
+
+def short_title(title: object, max_words: int = TITLE_WORDS) -> str:
+    words = str(title).split()
+    return " ".join(words[:max_words]) + (" ..." if len(words) > max_words else "")
 
 
 def format_price(price: object) -> str:
@@ -105,7 +111,7 @@ def answer_text(answer: Answer) -> str:
 
 
 def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[float],
-                    catalog_brands: list[str], query: str = "") -> list[str]:
+                    catalog_brands: list[str], query: str = "", max_recs: int | None = None) -> list[str]:
     """Deterministic grounding checks (spec 9). Returns a list of errors; empty means grounded.
 
     1. Every product_id belongs to the retrieved set.
@@ -119,6 +125,11 @@ def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[floa
     for rec in answer.recommendations:
         if rec.product_id not in ids:
             errors.append(f"unknown product id {rec.product_id}")
+    rec_ids = [rec.product_id for rec in answer.recommendations]
+    if len(set(rec_ids)) < len(rec_ids):
+        errors.append("duplicate product id")
+    if max_recs is not None and len(rec_ids) > max_recs:
+        errors.append(f"more than {max_recs} recommendations")
     text = answer_text(answer)
     allowed = {round(float(p), 2) for p in items["price"] if not _blank(p)} | stated_prices
     for raw in _DOLLAR_RE.findall(text):
@@ -140,7 +151,7 @@ def render(answer: Answer, items: pd.DataFrame) -> str:
     lines = [answer.summary.strip()]
     for i, rec in enumerate(answer.recommendations, 1):
         p = by_id.loc[rec.product_id]
-        lines.append(f"{i}. {p['title']} ({format_price(p['price'])}): {rec.reason.strip()}")
+        lines.append(f"{i}. {short_title(p['title'])} ({format_price(p['price'])}): {rec.reason.strip()}")
     return "\n".join(lines)
 
 
@@ -151,7 +162,17 @@ def template_answer(items: pd.DataFrame, n_requested: int) -> str:
     lines = [head]
     for i, (_, p) in enumerate(items.iterrows(), 1):
         brand = "" if _blank(p["brand"]) else f" by {p['brand']}"
-        lines.append(f"{i}. {p['title']}{brand} ({format_price(p['price'])})")
+        lines.append(f"{i}. {short_title(p['title'])}{brand} ({format_price(p['price'])})")
+    return "\n".join(lines)
+
+
+def unpriced_section(items: pd.DataFrame) -> str:
+    """Plan item 8: matching products without a listed price, shown apart from the ranked results."""
+    if items.empty:
+        return ""
+    lines = ["Price not listed (cannot confirm they fit your budget):"]
+    lines += [f"- {short_title(p['title'])}" + ("" if _blank(p["brand"]) else f" by {p['brand']}")
+              for _, p in items.iterrows()]
     return "\n".join(lines)
 
 
@@ -191,7 +212,7 @@ def generate_answer(query: str, pq: ParsedQuery, items: pd.DataFrame, client: LL
         except (QuotaExhausted, Exception) as exc:  # noqa: BLE001 - any API failure degrades gracefully
             all_errors.append(f"LLM error: {type(exc).__name__}")
             break
-        attempt_errors = validate_answer(answer, items, stated, catalog_brands, query)
+        attempt_errors = validate_answer(answer, items, stated, catalog_brands, query, max_recs=n_requested)
         if not answer.recommendations:
             attempt_errors.append("no recommendations")
         if not attempt_errors:

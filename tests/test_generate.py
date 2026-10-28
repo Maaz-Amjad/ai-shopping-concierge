@@ -117,3 +117,18 @@ def test_validator_allows_brand_the_user_named_and_ignores_common_word_brands():
     a = answer("Unlike Samsung, this GE model is the best value at $129.99.", [("B1", "Not a SAMSUNG part.")])
     errors = validate_answer(a, items(), {150.0}, BRANDS + ["Best", "SAMSUNG"], query="ice maker, not samsung")
     assert errors == []
+
+
+def test_validator_flags_duplicate_ids_and_too_many_recommendations():
+    a = answer("Two picks.", [("B1", "a"), ("B1", "b"), ("B2", "c")])
+    errors = validate_answer(a, items(), set(), BRANDS, max_recs=2)
+    assert errors == ["duplicate product id", "more than 2 recommendations"]
+
+
+def test_short_title_and_unpriced_section():
+    from src.generate import short_title, unpriced_section
+
+    assert short_title("one two three", max_words=2) == "one two ..." and short_title("one two", 2) == "one two"
+    text = unpriced_section(items().iloc[[1]])
+    assert text == "Price not listed (cannot confirm they fit your budget):\n- Water filter fits Whirlpool by AquaPure"
+    assert unpriced_section(items().iloc[:0]) == ""
