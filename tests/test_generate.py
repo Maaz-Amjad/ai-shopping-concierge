@@ -138,3 +138,10 @@ def test_validator_catches_brand_written_in_different_case_than_catalog():
     # 28 Oct (03_pipeline demo): catalog spells "BOSCH"; an invented "Bosch" was not flagged.
     a = answer("Better than any Bosch model.", [("B1", "Quiet.")])
     assert validate_answer(a, items(), set(), BRANDS + ["BOSCH"]) == ["brand BOSCH is not in the product data"]
+
+
+def test_validator_catches_brands_spelled_lowercase_or_with_digits():
+    # Verifier, Phases 9-10: the capital-letter rule stopped matching brands like "mDesign" or "77L" in their own spelling.
+    for brand in ("mDesign", "77L"):
+        a = answer(f"Try the {brand} one.", [("B1", "Quiet.")])
+        assert validate_answer(a, items(), set(), BRANDS + [brand]) == [f"brand {brand} is not in the product data"]
