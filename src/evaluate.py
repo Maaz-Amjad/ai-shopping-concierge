@@ -583,9 +583,65 @@ def run_judge(cfg: dict, limit: int | None) -> None:
               f"strata {dict((str(k), int(v)) for k, v in sheet.stratum.value_counts().sort_index().items())} (judge grades hidden)")
 
 
-def run_qrels() -> None:
-    """Agreement on the verified sample, then eval/qrels.csv (human grade wins)."""
+def run_judge_s6(cfg: dict, limit: int | None) -> None:
+    """Experiment A runs (S5 vs S6 for the seeded users), then judge only S6 top-10 pairs missing from the
+    main labels, one batch per query (prompts of the main pool stay unchanged, so its cache stays valid)."""
+    from src.data import load_catalog, load_interactions
+    from src.personalize import pick_users
+
+    queries = load_queries()
+    users = pick_users(load_interactions(), n=8, min_interactions=10, seed=cfg["seed"])
+    runs, shift = run_s6(queries, load_parsed(), cfg, users, depth=cfg["eval"]["pool_depth"])
+    runs.to_csv(RESULTS_DIR / "runs_s6.csv", index=False)
+    shift.to_csv(RESULTS_DIR / "s6_shift.csv", index=False)
     labels = pd.read_csv(RESULTS_DIR / "judge_labels.csv")
+    judged = set(zip(labels["query_id"], labels["product_id"]))
+    s6 = runs[runs["system"] != "S5"]
+    new = s6[[(q, p) not in judged for q, p in zip(s6["query_id"], s6["product_id"])]]
+    pool = new[["query_id", "product_id"]].drop_duplicates().sort_values(["query_id", "product_id"])
+    print(f"S6 runs: {len(users)} users x {queries.query_id.nunique()} queries; new pairs to judge: {len(pool)} "
+          f"in {pool.query_id.nunique()} queries")
+    client = judge_client(cfg, limit)
+    out, notes = judge_pool(pool.reset_index(drop=True), queries, load_catalog(), client)
+    out.to_csv(RESULTS_DIR / "judge_labels_s6.csv", index=False)
+    for note in notes:
+        print("[judge]", note)
+    print(f"judged {len(out)}/{len(pool)} new S6 pairs | API calls this run: {client.calls_made} | "
+          f"cache hits: {client.cache_hits} | {client.model} calls today: {client.calls_today()}")
+
+
+def run_sensitivity(cfg: dict) -> pd.DataFrame:
+    """Spec 8.4: weights stay fixed; report how DEV relevance and rank shift move over a small grid.
+
+    Scored on judged-only lists (other weights surface unjudged items); the unjudged share is shown.
+    """
+    from src.data import load_interactions
+    from src.personalize import pick_users
+
+    queries = load_queries()
+    dev = queries[queries["split"] == "dev"]
+    users = pick_users(load_interactions(), n=8, min_interactions=10, seed=cfg["seed"])
+    grid = [(round(1 - wp - wo, 2), wp, wo) for wp in (0.0, 0.1, 0.25, 0.5) for wo in (0.0, 0.05, 0.1)]
+    runs, shift = run_s6(dev, load_parsed(), cfg, users, weights_grid=grid, depth=10)
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    a = experiment_a(runs, shift, qrels[qrels["query_id"].isin(dev["query_id"])])
+    out = a.groupby("weights").agg(delta_ndcg_judged_only=("delta_NDCG@10_judged_only", "mean"),
+                                   delta_ndcg=("delta_NDCG@10", "mean"), unjudged=("unjudged@10", "mean"),
+                                   kendall_tau=("kendall_tau", "mean"), overlap=("overlap@10", "mean")).reset_index()
+    out.to_csv(RESULTS_DIR / "weight_sensitivity_dev.csv", index=False)
+    print(f"dev queries {len(dev)}, users {len(users)}; mean over (user, query):")
+    print(out.round(4).to_string(index=False))
+    return out
+
+
+def run_qrels() -> None:
+    """Agreement on the verified sample, then eval/qrels.csv (human grade wins).
+
+    S6-only judge labels (judge_labels_s6.csv), when present, are added; they are not in the manual sample.
+    """
+    labels = pd.read_csv(RESULTS_DIR / "judge_labels.csv")
+    if (RESULTS_DIR / "judge_labels_s6.csv").exists():
+        labels = pd.concat([labels, pd.read_csv(RESULTS_DIR / "judge_labels_s6.csv")], ignore_index=True)
     manual = pd.read_csv(ROOT / "eval" / "manual_labels.csv")
     a = agreement(labels, manual)
     qrels = merge_qrels(labels, manual)
@@ -631,7 +687,7 @@ def run_prefix(cfg: dict) -> pd.DataFrame:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "qrels", "prefix"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -643,8 +699,14 @@ def main(argv: list[str] | None = None) -> None:
     if args.action == "judge":
         run_judge(cfg, args.limit)
         return
+    if args.action == "judge-s6":
+        run_judge_s6(cfg, args.limit)
+        return
     if args.action == "qrels":
         run_qrels()
+        return
+    if args.action == "sensitivity":
+        run_sensitivity(cfg)
         return
     if args.action == "prefix":
         run_prefix(cfg)
