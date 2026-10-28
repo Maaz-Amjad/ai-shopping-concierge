@@ -194,3 +194,25 @@ def test_judged_only_closes_rank_gaps_and_unjudged_share():
     cond = judged_only(runs, qrels)
     assert cond[cond.system == "S5"].sort_values("rank")[["product_id", "rank"]].values.tolist() == [["a", 1], ["c", 2]]
     assert unjudged_share(runs, qrels).to_dict() == pytest.approx({"S3": 0.0, "S5": 1 / 3})
+
+
+def test_report_tables_average_s6_users_and_pair_systems():
+    from src.evaluate import paired_table, per_query_table, summary_table
+
+    catalog = pd.DataFrame({"product_id": ["a", "b"], "price": [10.0, 50.0], "category": ["X", "X"],
+                            "brand": ["GE", "GE"], "title": ["a", "b"], "features": ["", ""]})
+    queries = pd.DataFrame({"query_id": ["q1"], "gold_max_price": [20.0], "gold_min_price": [np.nan],
+                            "gold_category": [np.nan], "gold_brand": [np.nan], "gold_exclude": [np.nan]})
+    qrels = pd.DataFrame({"query_id": ["q1", "q1"], "product_id": ["a", "b"], "grade": [2, 0]})
+    runs = pd.DataFrame({"query_id": ["q1"] * 4, "system": ["S5", "S6|u1|w", "S6|u2|w", "S6|u2|w"],
+                         "rank": [1, 1, 1, 2], "product_id": ["a", "a", "b", "a"]})
+    pq = per_query_table(runs, queries, qrels, catalog).set_index("system")
+    assert pq.loc["S5", "NDCG@10"] == 1.0 and pq.loc["S5", "adherence@10"] == 1.0
+    # u1: [a] NDCG 1, adherence 1; u2: [b, a] NDCG 1/log2(3) / 3 ... averaged over users.
+    u2 = (3 / math.log2(3)) / 3
+    assert pq.loc["S6", "NDCG@10"] == pytest.approx((1 + u2) / 2)
+    assert pq.loc["S6", "adherence@10"] == pytest.approx((1 + 0.5) / 2)
+    s = summary_table(pq.reset_index(), n_resamples=100).set_index("system")
+    assert s.loc["S5", "zero_result_rate@5"] == 1.0                  # 1 item returned < 5
+    d = paired_table(pq.reset_index(), pairs=(("S5", "S6"),)).iloc[0]
+    assert d["delta"] == pytest.approx((1 + u2) / 2 - 1) and d["queries"] == 1

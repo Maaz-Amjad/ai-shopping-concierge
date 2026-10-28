@@ -688,9 +688,108 @@ def run_prefix(cfg: dict) -> pd.DataFrame:
     return out
 
 
+# ---- test-set report (spec 10.4, 10.5; Phase 9) ----------------------------------------------------
+
+PAIRS = (("S1", "S3"), ("S3", "S5"), ("S4", "S5"), ("S5", "S6"), ("S5", "S5x"))
+REPORT_METRICS = ("P@5", "P@10", "R@5", "R@10", "NDCG@5", "NDCG@10", "adherence@5", "adherence@10")
+
+
+def per_query_table(runs: pd.DataFrame, queries: pd.DataFrame, qrels: pd.DataFrame,
+                    catalog: pd.DataFrame) -> pd.DataFrame:
+    """One row per (system, query): ranking metrics, constraint adherence and items returned.
+
+    S6 runs (system "S6|user|weights") are scored per user and averaged into one "S6" row per query.
+    """
+    q = queries[queries["query_id"].isin(runs["query_id"].unique()) | queries["query_id"].isin(qrels["query_id"])]
+    runs = runs.assign(row=runs["product_id"].map(pd.Series(np.arange(len(catalog)), index=catalog["product_id"])))
+    m = ranking_metrics(runs, qrels[qrels["query_id"].isin(q["query_id"])])
+    m = m[m["query_id"].isin(q["query_id"])]
+    adh = adherence_table(runs, q, catalog)
+    n_ret = runs[runs["rank"] <= 10].groupby(["system", "query_id"]).size().rename("n_returned").reset_index()
+    out = m.merge(adh, on=["system", "query_id"], how="left").merge(n_ret, on=["system", "query_id"], how="left")
+    out["n_returned"] = out["n_returned"].fillna(0).astype(int)
+    is_s6 = out["system"].str.startswith("S6|")
+    if is_s6.any():
+        s6 = out[is_s6].groupby("query_id").mean(numeric_only=True).reset_index().assign(system="S6")
+        out = pd.concat([out[~is_s6], s6], ignore_index=True)
+    return out
+
+
+def summary_table(per_query: pd.DataFrame, n_resamples: int = 1000, seed: int = 42) -> pd.DataFrame:
+    """Mean and 95% bootstrap CI over queries for each system and metric (NaN queries dropped)."""
+    rows = []
+    for system, g in per_query.groupby("system", sort=True):
+        row = {"system": system, "queries": len(g)}
+        for metric in REPORT_METRICS:
+            mean, lo, hi = bootstrap_ci(g[metric].to_numpy(), n_resamples, seed)
+            row.update({metric: mean, f"{metric}_lo": lo, f"{metric}_hi": hi,
+                        f"{metric}_n": int(g[metric].notna().sum())})
+        row["zero_result_rate@5"] = float((g["n_returned"] < 5).mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def paired_table(per_query: pd.DataFrame, metric: str = "NDCG@10", pairs=PAIRS,
+                 n_resamples: int = 1000, seed: int = 42) -> pd.DataFrame:
+    """Paired bootstrap of metric(b) - metric(a) over the same queries, for adjacent systems."""
+    wide = per_query.pivot(index="query_id", columns="system", values=metric)
+    rows = []
+    for a, b in pairs:
+        if a in wide and b in wide:
+            mean, lo, hi = paired_bootstrap(wide[a].to_numpy(), wide[b].to_numpy(), n_resamples, seed)
+            n = int((wide[a].notna() & wide[b].notna()).sum())
+            rows.append({"from": a, "to": b, "metric": metric, "delta": mean, "lo": lo, "hi": hi, "queries": n})
+    return pd.DataFrame(rows)
+
+
+def run_report(cfg: dict, split: str = "test") -> None:
+    """Phase 9: metrics with CIs, paired differences, zero-result rate, parse F1 and latency for one split."""
+    from src.data import load_catalog
+
+    catalog, queries = load_catalog(), load_queries()
+    q = queries[queries["split"] == split]
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    runs = pd.read_csv(RESULTS_DIR / "runs.csv")
+    frames = [runs]
+    s6_path = RESULTS_DIR / "runs_s6.csv"
+    if s6_path.exists():
+        s6 = pd.read_csv(s6_path)
+        frames.append(s6[s6["system"] != "S5"])
+    runs = pd.concat(frames, ignore_index=True)
+    runs = runs[runs["query_id"].isin(q["query_id"])]
+    n_res, seed = cfg["eval"]["bootstrap_resamples"], cfg["seed"]
+    per_query = per_query_table(runs, q, qrels, catalog)
+    summary = summary_table(per_query, n_res, seed)
+    paired = pd.concat([paired_table(per_query, m, n_resamples=n_res, seed=seed) for m in ("NDCG@10", "P@10")],
+                       ignore_index=True)
+    per_query.to_csv(RESULTS_DIR / f"{split}_per_query.csv", index=False)
+    summary.to_csv(RESULTS_DIR / f"{split}_summary.csv", index=False)
+    paired.to_csv(RESULTS_DIR / f"{split}_paired.csv", index=False)
+
+    pd.set_option("display.width", 200)
+    fmt = lambda r, m: f"{r[m]:.3f} [{r[m + '_lo']:.2f}, {r[m + '_hi']:.2f}]"
+    print(f"{split}: {len(q)} queries; mean [95% bootstrap CI]; NaN queries (nothing relevant in pool / "
+          f"no gold limit) dropped per metric")
+    cols = ["P@10", "R@10", "NDCG@10", "adherence@10"]
+    print(pd.DataFrame([{"system": r["system"], **{m: fmt(r, m) for m in cols},
+                         "n(NDCG)": r["NDCG@10_n"], "n(adh)": r["adherence@10_n"],
+                         "zero@5": f"{r['zero_result_rate@5']:.2f}"} for _, r in summary.iterrows()]).to_string(index=False))
+    print("\npaired differences (to - from), same queries:")
+    print(paired.round(3).to_string(index=False))
+    pred = load_parsed()
+    counts = parse_counts(pred[pred.query_id.isin(q.query_id)], q)
+    hard = micro_f1(counts[counts.field.isin(HARD_FIELDS)])
+    print(f"\nparse micro-F1 ({split}, hard fields): {hard['f1']:.3f} (P {hard['precision']:.3f}, R {hard['recall']:.3f}); "
+          f"with exclusions {micro_f1(counts)['f1']:.3f}")
+    info = pd.read_csv(RESULTS_DIR / "run_info.csv")
+    info = info[info.query_id.isin(q.query_id)]
+    lat = info.groupby("system")["search_ms"].apply(lambda s: pd.Series(latency_summary(s))).unstack().round(2)
+    print("\nsearch latency ms (retrieval + filtering):\n" + lat.to_string())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -707,6 +806,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "qrels":
         run_qrels()
+        return
+    if args.action == "report":
+        run_report(cfg, args.split)
         return
     if args.action == "sensitivity":
         run_sensitivity(cfg)
