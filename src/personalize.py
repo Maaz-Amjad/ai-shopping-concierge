@@ -133,13 +133,14 @@ def next_item_eval(interactions: pd.DataFrame, catalog: pd.DataFrame, embeddings
     """Rank all items the user has not seen for each user; one row per (user, method) with hit@k and ndcg@k.
 
     blend = w_pers * S_pers + w_pop * S_pop (no query, so no semantic term), renormalized; S_pers is
-    min-max normalized over the user's unseen items.
+    min-max normalized over the user's unseen items. Popularity (score and tie-break) counts history only.
     """
     rng = np.random.default_rng(seed)
     history, held = holdout_split(interactions)
     row_of = pd.Series(np.arange(len(catalog)), index=catalog["product_id"].to_numpy())
-    popularity = catalog["popularity"].to_numpy()
-    s_pop = popularity_score(popularity, popularity.max())
+    # Popularity from history only: catalog["popularity"] also counts the held-out interactions (leak).
+    popularity = history["product_id"].value_counts().reindex(catalog["product_id"], fill_value=0).to_numpy()
+    s_pop = popularity_score(popularity, max(popularity.max(), 1))
     id_order = np.argsort(np.argsort(catalog["product_id"].to_numpy()))
     total = w.pers + w.pop
     hist_by_user = {u: g for u, g in history.groupby("user_id", sort=True)}
