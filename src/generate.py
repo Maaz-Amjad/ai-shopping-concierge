@@ -105,13 +105,14 @@ def answer_text(answer: Answer) -> str:
 
 
 def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[float],
-                    catalog_brands: list[str]) -> list[str]:
+                    catalog_brands: list[str], query: str = "") -> list[str]:
     """Deterministic grounding checks (spec 9). Returns a list of errors; empty means grounded.
 
     1. Every product_id belongs to the retrieved set.
     2. Every dollar amount equals a retrieved product price or a price the user stated.
     3. Every catalog brand mentioned belongs to a retrieved product, or appears in that product's own
-       text (compatibility wording such as "fits Whirlpool"), or in the user's request.
+       text (compatibility wording such as "fits Whirlpool"), or in the user's request. A brand counts as
+       mentioned only with the catalog's capitalization, so common-word brands ("Best") do not match adjectives.
     """
     errors = []
     ids = set(items["product_id"])
@@ -125,10 +126,10 @@ def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[floa
         if amount not in allowed:
             errors.append(f"price ${raw} is not a listed price")
     grounded = " ".join(str(v) for col in ("brand", "title", "features") for v in items[col] if not _blank(v))
-    grounded = grounded.casefold()
+    grounded = f"{grounded} {query}"
     for brand in catalog_brands:
-        pattern = rf"(?<![\w]){re.escape(brand.casefold())}(?![\w])"
-        if re.search(pattern, text.casefold()) and not re.search(pattern, grounded):
+        pattern = rf"(?<![\w]){re.escape(brand)}(?![\w])"
+        if re.search(pattern, text) and not re.search(pattern, grounded, flags=re.IGNORECASE):
             errors.append(f"brand {brand} is not in the product data")
     return errors
 
@@ -190,7 +191,7 @@ def generate_answer(query: str, pq: ParsedQuery, items: pd.DataFrame, client: LL
         except (QuotaExhausted, Exception) as exc:  # noqa: BLE001 - any API failure degrades gracefully
             all_errors.append(f"LLM error: {type(exc).__name__}")
             break
-        attempt_errors = validate_answer(answer, items, stated, catalog_brands)
+        attempt_errors = validate_answer(answer, items, stated, catalog_brands, query)
         if not answer.recommendations:
             attempt_errors.append("no recommendations")
         if not attempt_errors:
