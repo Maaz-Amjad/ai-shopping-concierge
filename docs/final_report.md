@@ -2,8 +2,9 @@
 
 Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | October 2026
 
-> **Draft status (28 Oct):** every number below comes from `eval/results/`. Items marked **[pending]** depend on the
-> last relevance labels for the personalized system S6 (judged in the 29 Oct API quota window) and will be filled then.
+> **Status (28 Oct):** every number below comes from `eval/results/`. Numbers marked *provisional* depend on the
+> personalized system S6, 11 % of whose top-10 items are not yet labelled (judge API overloaded); they are scored on
+> judged items only and will be refreshed once those items are graded.
 
 ## 1. Summary
 
@@ -20,7 +21,7 @@ On 15 held-out test queries (never used for tuning):
 | G1 query understanding | parse F1 ≥ 0.85 | **0.94** (precision 0.88, recall 1.00) |
 | G2 semantic retrieval | dense vs TF-IDF on NDCG@10, with CIs | **0.66 vs 0.41**; paired difference +0.25 [0.05, 0.47] |
 | G3 constraint enforcement | adherence ≥ 95 % | **100 %** for the filtered systems (vs 43–63 % without filters) |
-| G4 personalization | no material relevance loss; beat popularity on next-item HitRate@10 | next item: **6.3 % vs 2.8 %** (CIs do not overlap); relevance: **[pending]** |
+| G4 personalization | no material relevance loss; beat popularity on next-item HitRate@10 | next item: **6.3 % vs 2.8 %** (CIs do not overlap); relevance: small loss, **−0.025** NDCG@10 [−0.052, −0.004] on judged items (*provisional*) |
 | G5 grounded answers | 0 IDs outside the retrieved set; mismatches reported | **0** outside IDs; 22/22 answers grounded (21 on the first try); 0 price or brand mismatches in accepted answers |
 | NFR-1 latency | retrieval p95 < 500 ms; end-to-end p95 < 6 s | retrieval **11 ms**; generation alone p95 **12.7 s** (target not met) |
 
@@ -85,10 +86,11 @@ errors, and logs each call. Over the whole project the pipeline used 61 Flash-Li
 | S4 post-filter | 0.79 | 0.75 [0.60, 0.90] | 1.00 |
 | S5 filter-first | 0.79 | 0.75 [0.60, 0.90] | 1.00 |
 | S5x + exclusions | 0.81 | 0.77 [0.60, 0.92] | 1.00 |
-| S6 personalized | [pending] | [pending] | 1.00 |
+| S6 personalized (*provisional*) | 0.71 | 0.66 [0.52, 0.81] | 1.00 |
 
 Paired differences in NDCG@10: S1 → S3 **+0.25 [0.05, 0.47]**; S3 → S5 +0.10 [−0.14, 0.35]; S4 → S5 **0.00**;
-S5 → S5x +0.01 [0.00, 0.04]. With 15 queries these are indicative, not significance claims.
+S5 → S5x +0.01 [0.00, 0.04]; S5 → S6 −0.08 [−0.13, −0.04] counting unlabelled S6 items as irrelevant (−0.025 on
+judged items only, section 6.3). With 15 queries these are indicative, not significance claims.
 
 - **Semantic retrieval** gives the clearest gain, and the only interval that excludes zero.
 - **Filters** guarantee the limits (adherence 1.00), and raise relevance on average, but the interval spans zero:
@@ -110,9 +112,14 @@ Dev F1 went from 0.80 (first prompt) to 1.00 (final prompt) through tuning on de
 - **Experiment B (next item, 3,995 users):** HitRate@10 random 0.15 %, popularity 2.78 % [2.28, 3.28], profile 4.01 %
   [3.40, 4.66], **blend 6.31 % [5.61, 7.03]**; NDCG@10 shows the same order. Popularity is counted from earlier
   interactions only (an earlier version counted the held-out purchase too; the verifier caught it and it was fixed).
-- **Experiment A (query relevance, 8 users with 10+ interactions):** **[pending]**. Personalization changes results
-  substantially (on dev, Kendall tau ≈ 0.76 and ~85 % of the top 10 kept per user), so the new items it surfaces have to be
-  labelled before its relevance effect can be measured fairly.
+- **Experiment A (query relevance, 8 users with 10+ interactions, test queries; *provisional*):** personalization
+  changes the results (Kendall tau 0.80 over the pool, 80 % of the top 10 kept) and costs a little relevance: on judged
+  items NDCG@10 drops by **−0.025 [−0.052, −0.004]**, and all 8 users are slightly negative (−0.010 to −0.043). The median
+  (user, query) change is 0; the loss comes from a few queries (q10 −0.14, q19 −0.08, q02 and q09 −0.06). The plain change, which
+  counts the 11 % of S6's top 10 that is still unlabelled as irrelevant, is −0.09. The spec expected a small or neutral
+  effect: it is small but consistently negative. Dev queries had suggested about +0.01, so 10 dev queries were a weak
+  guide here. Combined with experiment B, personalization helps predict what a user buys next but does not help a user
+  who has stated what they want.
 - **Weight sensitivity (dev, judged items only):** across w_pers 0–0.5 and w_pop 0–0.1 the change in NDCG@10 stays within
   ±0.012, so on labelled items personalization barely affects relevance; what grows with w_pers is the rank shift.
 
@@ -148,7 +155,9 @@ Failures were tagged by deterministic rules (spec taxonomy) and checked by readi
 - **Label conflicts.** On q24, five full-size Bosch dishwashers were graded 1 by the judge and by hand although they
   break the stated *countertop* limit, so S5 scores 0 for correctly returning nothing. Nine such conflicts exist across
   the test queries; they are reported rather than relabelled.
-- **Personalization drift:** **[pending]**.
+- **Personalization drift (*provisional*).** The rule (S6 NDCG@10 more than 0.1 below S5) tags five queries, but it
+  counts unlabelled items as irrelevant; on judged items only, one query crosses it: q10, "beverage refrigerator for cans
+  and wine" (−0.14).
 - **Semantic retrieval failures and grounding failures:** none on the test queries (the one grounding rejection was a
   dev query, fixed by regeneration).
 
