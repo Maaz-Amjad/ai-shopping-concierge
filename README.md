@@ -14,7 +14,7 @@ query -> LLM query parsing (Gemini) -> catalog-validated hard filters (Python)
 
 ## Status
 
-Work in progress; deadline 28 Oct 2026. Design decisions and deviations will be summarized in the final report.
+Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be summarized in the final report.
 
 | Phase | State |
 |---|---|
@@ -24,7 +24,10 @@ Work in progress; deadline 28 Oct 2026. Design decisions and deviations will be 
 | 3 Embeddings + baselines: `src/embed.py`, `src/retrieve.py`, [02_baselines](notebooks/02_baselines.ipynb) | done: S1 TF-IDF, S2 BM25, S3 dense; S4/S5 primitives |
 | 4 Query parsing + hard filters: `src/parse.py`, `src/filters.py` | done: Gemini parser (prompt v2, tuned on dev), S4 post-filter and S5 filter-first |
 | 5 Evaluation harness: `src/evaluate.py` | done: metrics with bootstrap CIs; S1-S5 run on all 25 queries; dev parse F1 0.80 (prompt v1) -> 1.00 (v2) |
-| 6-10 Relevance labels, personalization, generation, report | planned |
+| 6 Relevance labels: LLM judge + manual check | done: 659 pooled pairs judged (Gemini 3.8 Flash); 167 (25%) human-verified, agreement 81% exact / 92% relevant-vs-not |
+| 7 Personalization: `src/personalize.py` | done: user profiles, weighted re-ranking, cold start; next-item test (3,995 users) HitRate@10 blend 0.063 vs popularity 0.028 vs random 0.002 |
+| 8 Grounded answers: `src/generate.py`, `src/pipeline.py` | done: grounding validator + one regeneration + template fallback; 22/22 answers grounded (21 first try) |
+| 9-10 Test-set evaluation, report | in progress |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -62,6 +65,10 @@ curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/A
 .venv/Scripts/python.exe -m src.embed    # -> artifacts/embeddings.npy (~27 min on CPU, minutes on a GPU)
 .venv/Scripts/python.exe -m src.parse --split dev    # Gemini, cached; also --split test
 .venv/Scripts/python.exe -m src.evaluate --split dev # S1-S5 runs, no LLM calls -> eval/results/runs.csv
+.venv/Scripts/python.exe -m src.evaluate judge       # LLM relevance judge (cached) -> eval/results/judge_labels.csv
+.venv/Scripts/python.exe -m src.evaluate qrels       # merge with human labels -> eval/qrels.csv
+.venv/Scripts/python.exe -m src.personalize          # next-item experiment, no LLM -> eval/results/exp_b_*.csv
+.venv/Scripts/python.exe -m src.pipeline             # grounded answers for all queries -> eval/results/generation.csv
 ```
 
 ## Repository layout
