@@ -99,6 +99,14 @@ def rank(cands: pd.DataFrame, user_vec: np.ndarray | None, w: Weights, *, catalo
     return out
 
 
+def pick_users(interactions: pd.DataFrame, n: int = 8, min_interactions: int = 10, seed: int = 42) -> list[str]:
+    """Experiment A users (spec 10.6): a seeded sample of users with at least `min_interactions`."""
+    counts = interactions["user_id"].value_counts()
+    eligible = sorted(counts[counts >= min_interactions].index)
+    rng = np.random.default_rng(seed)
+    return sorted(rng.choice(eligible, size=min(n, len(eligible)), replace=False).tolist())
+
+
 # ---- experiment B: held-out next item (spec 5.4, 10.6) ------------------------------------------
 
 METHODS = ("random", "popularity", "profile", "blend")

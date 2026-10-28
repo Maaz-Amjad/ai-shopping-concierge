@@ -161,3 +161,25 @@ def test_to_parsed_query_maps_nan_to_none():
                      "category": None, "brand": np.nan, "exclude_terms": ["white"]})
     pq = to_parsed_query(row)
     assert pq.max_price is None and pq.min_price == 10.0 and pq.brand is None and pq.exclude_terms == ["white"]
+
+
+# ---- experiment A ------------------------------------------------------------------------------
+
+
+def test_experiment_a_delta_condensed_and_unjudged_hand_computed():
+    from src.evaluate import experiment_a
+
+    qrels = pd.DataFrame({"query_id": ["q1"] * 3, "product_id": ["a", "b", "c"], "grade": [2, 0, 1]})
+    runs = pd.DataFrame({"query_id": ["q1"] * 5,
+                         "system": ["S5", "S5", "S6|u|0.7,0.25,0.05", "S6|u|0.7,0.25,0.05", "S6|u|0.7,0.25,0.05"],
+                         "user_id": ["", "", "u", "u", "u"], "rank": [1, 2, 1, 2, 3],
+                         "product_id": ["a", "b", "zzz", "a", "c"]})
+    shift = pd.DataFrame({"query_id": ["q1"], "user_id": ["u"], "weights": ["0.7,0.25,0.05"],
+                          "kendall_tau": [0.5], "overlap@10": [0.5]})
+    row = experiment_a(runs, shift, qrels, k=10).iloc[0]
+    ideal = 3 + 1 / math.log2(3)                                        # pool grades [2, 1, 0]
+    assert row["S5_NDCG@10"] == pytest.approx(3 / ideal)               # [a=2, b=0]
+    assert row["S6_NDCG@10"] == pytest.approx((3 / math.log2(3) + 1 / 2) / ideal)   # [zzz=0, a=2, c=1]
+    # Judged-only: S6 becomes [a, c] -> perfect; S5 stays [a, b].
+    assert row["delta_NDCG@10_judged_only"] == pytest.approx(1 - 3 / ideal)
+    assert row["unjudged@10"] == pytest.approx(1 / 3) and row["kendall_tau"] == 0.5

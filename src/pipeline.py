@@ -104,3 +104,62 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     timings["total"] = sum(timings.values())
     flags.update(generation_fallback=answer.fallback, grounding_errors=answer.errors)
     return PipelineResult(parsed, result.candidates, ranked, answer, timings, flags)
+
+
+def word_count(text: str) -> int:
+    return len(text.split())
+
+
+def generation_benchmark(limit: int | None, cfg: dict | None = None) -> pd.DataFrame:
+    """Spec 10.7: run respond() on every benchmark query (cached parses, new user) and save per-query rows."""
+    import json
+
+    from src.evaluate import load_parsed, load_queries, to_parsed_query
+
+    res = load_resources(cfg, max_calls=limit)
+    parsed = load_parsed().set_index("query_id")
+    rows = []
+    for _, q in load_queries().iterrows():
+        out = respond(q["text"], res, parsed=to_parsed_query(parsed.loc[q["query_id"]]))
+        a = out.answer
+        first = a.errors                  # errors of every rejected attempt
+        rows.append({
+            "query_id": q["query_id"], "split": q["split"], "n_returned": len(out.ranked),
+            "attempts": a.attempts, "fallback": a.fallback or "",
+            "grounded_first_try": a.attempts == 1 and a.fallback is None,
+            "grounded_final": a.fallback != "template",
+            "bad_ids": sum(e.startswith("unknown product id") for e in first),
+            "bad_prices": sum(e.startswith("price $") for e in first),
+            "bad_brands": sum(e.startswith("brand ") for e in first),
+            "invalid_json": sum(e.startswith("invalid JSON") for e in first),
+            "llm_errors": sum(e.startswith("LLM error") for e in first),
+            "answer_words": word_count(a.text), "errors": json.dumps(a.errors),
+            "ranked_ids": json.dumps(out.ranked["product_id"].tolist()),
+            "recommended_ids": json.dumps([r.product_id for r in a.answer.recommendations] if a.answer else []),
+            "answer": a.text, **{f"{k}_ms": round(v, 1) for k, v in out.timings_ms.items()},
+        })
+    df = pd.DataFrame(rows)
+    out_dir = ROOT / "eval" / "results"
+    df.to_csv(out_dir / "generation.csv", index=False)
+    llm_rows = df[df["fallback"] != "no_result"]
+    print(f"generated {len(df)} answers ({len(llm_rows)} via LLM, {int((df.fallback == 'no_result').sum())} "
+          f"no-result) | API calls this run: {res.client.calls_made} | cache hits: {res.client.cache_hits}")
+    print(f"grounded first try: {int(llm_rows.grounded_first_try.sum())}/{len(llm_rows)} | final (no template): "
+          f"{int(llm_rows.grounded_final.sum())}/{len(llm_rows)} | rejected attempts: invented ids "
+          f"{int(df.bad_ids.sum())}, price mismatches {int(df.bad_prices.sum())}, brand mismatches "
+          f"{int(df.bad_brands.sum())}, invalid JSON {int(df.invalid_json.sum())}, API errors {int(df.llm_errors.sum())}")
+    print(f"answer words: median {df.answer_words.median():.0f}, max {df.answer_words.max()} | "
+          f"generate ms median {df.generate_ms.median():.0f}, p95 {df.generate_ms.quantile(0.95):.0f}")
+    return df
+
+
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generation benchmark over all queries (spec 10.7).")
+    parser.add_argument("--limit", type=int, default=None, help="max real API calls (dry-run budget)")
+    generation_benchmark(parser.parse_args(argv).limit)
+
+
+if __name__ == "__main__":
+    main()

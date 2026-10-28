@@ -312,6 +312,86 @@ def adherence_table(runs: pd.DataFrame, queries: pd.DataFrame, catalog: pd.DataF
     return pd.DataFrame(rows)
 
 
+# ---- experiment A: personalization vs query relevance (spec 10.6) ----------------------------------
+
+
+def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequence[str],
+           weights_grid: Sequence[tuple[float, float, float]] | None = None,
+           depth: int = 10) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Re-rank each query's S5 pool for each user (and each weight setting).
+
+    Returns (runs: S5 and S6 top-`depth`, system label "S6|user|w_sem,w_pers,w_pop" for S6;
+    shift: one row per (user, weights, query) with Kendall tau between the S5 and S6 order of the
+    whole pool and the top-`depth` overlap).
+    """
+    from scipy.stats import kendalltau
+
+    from src.data import load_catalog, load_interactions
+    from src.embed import encode_query, load_embeddings, load_model, use_query_instruction
+    from src.personalize import Weights, build_profiles, rank
+    from src.retrieve import DenseIndex, retrieve
+
+    set_seed(cfg["seed"])
+    catalog = load_catalog()
+    embeddings, product_ids = load_embeddings()
+    if not (product_ids == catalog["product_id"].to_numpy()).all():
+        raise ValueError("embeddings are not aligned with the catalog; rebuild with python -m src.embed")
+    profiles = build_profiles(load_interactions(), catalog, embeddings)
+    index, model, prefix = DenseIndex(embeddings), load_model(cfg["embedding"]["model"]), use_query_instruction(cfg)
+    grid = [Weights(*w) for w in weights_grid] if weights_grid else [Weights.from_config(cfg)]
+    r = cfg["retrieval"]
+    parsed_by_id = parsed.set_index("query_id")
+    run_rows, shift_rows = [], []
+    for _, q in queries.iterrows():
+        qid, pq = q["query_id"], to_parsed_query(parsed_by_id.loc[q["query_id"]])
+        res = retrieve(pq, "filter_first", r["pool_size"], catalog=catalog, index=index,
+                       query_vec=encode_query(pq.semantic_query, model, use_instruction=prefix), n=depth,
+                       k0=r["k0"], k_max=r["k_max"], use_exclusions=False)
+        pool = res.candidates
+        for c in pool.head(depth).itertuples(index=False):
+            run_rows.append({"query_id": qid, "system": "S5", "user_id": "", "rank": int(c.rank),
+                             "product_id": catalog["product_id"].iat[int(c.row)], "score": float(c.score)})
+        if pool.empty:
+            continue
+        s5_rank = dict(zip(pool["row"], pool["rank"]))
+        for w in grid:
+            label = f"{w.sem:g},{w.pers:g},{w.pop:g}"
+            for user in users:
+                ranked = rank(pool, profiles[user], w, catalog=catalog, embeddings=embeddings)
+                for c in ranked.head(depth).itertuples(index=False):
+                    run_rows.append({"query_id": qid, "system": f"S6|{user}|{label}", "user_id": user,
+                                     "rank": int(c.rank), "product_id": c.product_id, "score": float(c.final)})
+                tau = kendalltau([s5_rank[x] for x in ranked["row"]], ranked["rank"]).statistic if len(pool) > 1 \
+                    else float("nan")
+                top_s5 = set(pool.head(depth)["row"])
+                shift_rows.append({"query_id": qid, "user_id": user, "weights": label, "kendall_tau": tau,
+                                   f"overlap@{depth}": len(top_s5 & set(ranked.head(depth)["row"])) / min(depth, len(pool))})
+    return pd.DataFrame(run_rows), pd.DataFrame(shift_rows)
+
+
+def experiment_a(runs: pd.DataFrame, shift: pd.DataFrame, qrels: pd.DataFrame, k: int = 10) -> pd.DataFrame:
+    """Per (user, weights, query): NDCG@k of S5 and S6, the change, the judged-only (condensed) change, and
+    the share of S6's top-k that is unjudged (unjudged counts as grade 0 in the main numbers)."""
+    judged = set(zip(qrels["query_id"], qrels["product_id"]))
+    s5 = ranking_metrics(runs[runs["system"] == "S5"], qrels, ks=(k,)).set_index("query_id")[f"NDCG@{k}"]
+    cond = runs[[(q, p) in judged for q, p in zip(runs["query_id"], runs["product_id"])]].copy()
+    cond["rank"] = cond.groupby(["system", "query_id"])["rank"].rank(method="first")
+    s5c = ranking_metrics(cond[cond["system"] == "S5"], qrels, ks=(k,)).set_index("query_id")[f"NDCG@{k}"]
+    s6 = runs[runs["system"] != "S5"]
+    m = ranking_metrics(s6, qrels, ks=(k,)).set_index(["system", "query_id"])[f"NDCG@{k}"]
+    mc = ranking_metrics(cond[cond["system"] != "S5"], qrels, ks=(k,)).set_index(["system", "query_id"])[f"NDCG@{k}"]
+    rows = []
+    for (system, qid), g in s6.groupby(["system", "query_id"]):
+        _, user, label = system.split("|")
+        top = g.sort_values("rank").head(k)
+        rows.append({"query_id": qid, "user_id": user, "weights": label,
+                     f"S5_NDCG@{k}": s5.get(qid, np.nan), f"S6_NDCG@{k}": m.get((system, qid), np.nan),
+                     f"delta_NDCG@{k}": m.get((system, qid), np.nan) - s5.get(qid, np.nan),
+                     f"delta_NDCG@{k}_judged_only": mc.get((system, qid), np.nan) - s5c.get(qid, np.nan),
+                     f"unjudged@{k}": float(np.mean([(qid, p) not in judged for p in top["product_id"]]))})
+    return pd.DataFrame(rows).merge(shift, on=["query_id", "user_id", "weights"], how="left")
+
+
 # ---- LLM relevance judge and manual verification (spec 10.3) ---------------------------------------
 
 JUDGE_PROMPT_VERSION = "judge-v1"

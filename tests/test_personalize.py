@@ -97,3 +97,12 @@ def test_next_item_eval_profile_finds_the_similar_item():
     assert per_user.set_index("method").loc["profile", "ndcg@2"] == 1.0
     s = summarize_next_item(per_user, k=2).set_index("method")
     assert s.loc["popularity", "hit@2"] == 1.0 and s.loc["popularity", "ndcg@2"] == pytest.approx(1 / math.log2(3))
+
+
+def test_pick_users_is_seeded_and_respects_minimum():
+    from src.personalize import pick_users
+
+    inter = pd.DataFrame({"user_id": ["a"] * 10 + ["b"] * 12 + ["c"] * 3 + ["d"] * 10,
+                          "product_id": [str(i) for i in range(35)], "timestamp": range(35)})
+    users = pick_users(inter, n=2, min_interactions=10, seed=42)
+    assert len(users) == 2 and set(users) <= {"a", "b", "d"} and users == pick_users(inter, 2, 10, 42)
