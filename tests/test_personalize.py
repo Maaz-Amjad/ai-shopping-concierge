@@ -106,3 +106,14 @@ def test_pick_users_is_seeded_and_respects_minimum():
                           "product_id": [str(i) for i in range(35)], "timestamp": range(35)})
     users = pick_users(inter, n=2, min_interactions=10, seed=42)
     assert len(users) == 2 and set(users) <= {"a", "b", "d"} and users == pick_users(inter, 2, 10, 42)
+
+
+def test_next_item_popularity_counts_only_history_not_held_out_items():
+    # Verifier 28 Oct: catalog popularity includes the held-out interactions (leak).
+    catalog, e = toy_catalog()                                          # catalog popularity: B = 100 (leaky)
+    inter = pd.DataFrame({"user_id": ["u", "u", "x", "x"], "product_id": ["A", "B", "C", "D"],
+                          "timestamp": [1, 2, 1, 2]})
+    per_user = next_item_eval(inter, catalog, e, Weights(0.7, 0.25, 0.05), k=10)
+    r = per_user[per_user.user_id == "u"].set_index("method")["rank"]
+    # History counts: A 1, C 1, B 0, D 0. u saw A; unseen B, C, D -> C first, then B before D on product_id.
+    assert r["popularity"] == 2
