@@ -132,3 +132,9 @@ def test_short_title_and_unpriced_section():
     text = unpriced_section(items().iloc[[1]])
     assert text == "Price not listed (cannot confirm they fit your budget):\n- Water filter fits Whirlpool by AquaPure"
     assert unpriced_section(items().iloc[:0]) == ""
+
+
+def test_validator_catches_brand_written_in_different_case_than_catalog():
+    # 28 Oct (03_pipeline demo): catalog spells "BOSCH"; an invented "Bosch" was not flagged.
+    a = answer("Better than any Bosch model.", [("B1", "Quiet.")])
+    assert validate_answer(a, items(), set(), BRANDS + ["BOSCH"]) == ["brand BOSCH is not in the product data"]
