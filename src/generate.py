@@ -118,7 +118,8 @@ def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[floa
     2. Every dollar amount equals a retrieved product price or a price the user stated.
     3. Every catalog brand mentioned belongs to a retrieved product, or appears in that product's own
        text (compatibility wording such as "fits Whirlpool"), or in the user's request. A brand counts as
-       mentioned only with the catalog's capitalization, so common-word brands ("Best") do not match adjectives.
+       mentioned when it appears (any case) starting with a capital letter, so "Bosch" matches the catalog's
+       "BOSCH" while lowercase adjectives ("best") do not match common-word brands ("Best").
     """
     errors = []
     ids = set(items["product_id"])
@@ -138,9 +139,15 @@ def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[floa
             errors.append(f"price ${raw} is not a listed price")
     grounded = " ".join(str(v) for col in ("brand", "title", "features") for v in items[col] if not _blank(v))
     grounded = f"{grounded} {query}"
+    seen: set[str] = set()
     for brand in catalog_brands:
+        key = brand.casefold()
+        if key in seen:                  # one check per brand, whatever its catalog spelling variants
+            continue
+        seen.add(key)
         pattern = rf"(?<![\w]){re.escape(brand)}(?![\w])"
-        if re.search(pattern, text) and not re.search(pattern, grounded, flags=re.IGNORECASE):
+        mentioned = any(m.group(0)[0].isupper() for m in re.finditer(pattern, text, flags=re.IGNORECASE))
+        if mentioned and not re.search(pattern, grounded, flags=re.IGNORECASE):
             errors.append(f"brand {brand} is not in the product data")
     return errors
 

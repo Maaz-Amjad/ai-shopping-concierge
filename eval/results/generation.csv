@@ -1,113 +1,113 @@
 query_id,split,n_returned,attempts,fallback,grounded_first_try,grounded_final,bad_ids,bad_prices,bad_brands,invalid_json,llm_errors,answer_words,over_max_words,llm_words,errors,ranked_ids,recommended_ids,answer,parse_ms,retrieve_ms,rank_ms,generate_ms,total_ms
 q01,dev,5,1,,True,True,0,0,0,0,0,60,False,34,[],"[""B0BCVVJ2HW"", ""B0C64XWQX9"", ""B00YD35NP2"", ""B01BIDPHYQ"", ""B010MNQ4K4""]","[""B0BCVVJ2HW"", ""B0C64XWQX9""]","Here are two refrigerator water filter replacements that fit your budget and match specific models.
 1. Amazon Basics Replacement GE MSWF Refrigerator Water Filter Cartridge - ... ($12.16): Amazon Basics replacement GE MSWF water filter priced at $12.16.
-2. Waterdrop MSWF Refrigerator Water Filter, Replacement for GE® MSWF, 101820A, ... ($16.99): Waterdrop MSWF refrigerator water filter replacement priced at $16.99.",0.0,269.0,9.0,160.1,438.1
+2. Waterdrop MSWF Refrigerator Water Filter, Replacement for GE® MSWF, 101820A, ... ($16.99): Waterdrop MSWF refrigerator water filter replacement priced at $16.99.",0.0,267.9,5.6,163.5,437.0
 q02,test,5,1,,True,True,0,0,0,0,0,156,True,91,[],"[""B0C6K9Z29X"", ""B0BZCPJYNP"", ""B0C9VMLRBW"", ""B0B7J1ZJPL"", ""B0C6FDT9L2""]","[""B0C6K9Z29X"", ""B0BZCPJYNP"", ""B0C9VMLRBW"", ""B0B7J1ZJPL"", ""B0C6FDT9L2""]","Here are the best quiet, portable countertop ice makers priced under $150 that fit your requirements.
 1. Countertop Ice Maker, FREE VILLAGE Ice Maker Machine for Countertop ... ($110.49): This portable ice maker operates at less than 45 decibels, features a self-cleaning function, and costs $110.49.
 2. Ice Makers Countertop, Self-Cleaning Function, Portable Electric Ice Cube Maker ... ($69.99): It offers quiet operation, a portable design with self-cleaning, and is priced at $69.99.
 3. Ice Maker Machine for Countertop, 9 Ice Cubes Ready in ... ($93.04): This compact ice maker runs at a very low noise level below 35dB and costs $93.04.
 4. Ice Maker Machine for Countertop - Portable Ice Cube Maker ... ($129.99): A portable countertop ice machine with a quiet <45dB noise level, priced at $129.99.
-5. Antarctic Star Countertop Ice Maker Portable Ice Machine with Handle,Self-Cleaning ... ($47.99): This ultra-quiet portable ice maker runs at under 35dB and is priced at $47.99.",0.0,19.8,3.0,163.3,186.1
+5. Antarctic Star Countertop Ice Maker Portable Ice Machine with Handle,Self-Cleaning ... ($47.99): This ultra-quiet portable ice maker runs at under 35dB and is priced at $47.99.",0.0,17.0,2.6,194.2,213.8
 q03,test,5,1,,True,True,0,0,0,0,0,125,True,65,[],"[""B07QX4CG99"", ""B093VFQKV2"", ""B093VHL2V1"", ""B005B4FD84"", ""B0B6N1YM3F""]","[""B07QX4CG99"", ""B093VFQKV2"", ""B093VHL2V1"", ""B005B4FD84"", ""B0B6N1YM3F""]","Here are several dryer heating element options fitting your price range between $15 and $40.
 1. 1-Year Warranty 137114000 Dryer Heating Element Replacement Part- Compatible with ... ($36.99): Frigidaire and Kenmore compatible dryer heating element priced at $36.99.
 2. 279838 Dryer Heating Element for Whirlpool Cabrio Maytag Kenmore Roper ... ($23.99): Whirlpool, Maytag, and Kenmore compatible heating element kit priced at $23.99.
 3. 279838 W10724237 Dryer Heating Element for Whirlpool Cabrio Maytag Kenmore ... ($28.87): Dryer heating element set for multiple brands priced at $28.87.
 4. Whirlpool Y503978 Heater Element for Dryer ($37.60): Genuine Whirlpool replacement heater element priced at $37.60.
-5. W10724237 Dryer Heating Element for Whirlpool Maytag Centennial Kenmore 70 ... ($26.26): Dryer heating element kit compatible with various brands priced at $26.26.",0.0,20.7,1.8,153.1,175.7
+5. W10724237 Dryer Heating Element for Whirlpool Maytag Centennial Kenmore 70 ... ($26.26): Dryer heating element kit compatible with various brands priced at $26.26.",0.0,20.0,1.7,180.1,201.8
 q04,dev,5,2,,False,True,1,0,0,0,0,153,True,88,"[""unknown product id B00000000X""]","[""B092Z2BNC6"", ""B0C35WFNZF"", ""B0BK1CWWP4"", ""B08H3GFDWP"", ""B09C2YW4XW""]","[""B0C35WFNZF"", ""B092Z2BNC6"", ""B0BK1CWWP4"", ""B08H3GFDWP"", ""B09C2YW4XW""]","Here are range hood options suitable for a small kitchen, all priced under $200.
 1. COSMO 5U30 30 in. Under Cabinet Range Hood with Ducted/Ductless ... ($112.50): Affordable 30-inch slim under cabinet design priced at $112.50, ideal for smaller spaces.
 2. FIREGAS Under Cabinet Range Hood 36 inch with Ducted/Ductless Convertible, ... ($119.99): Compact 36-inch slim under cabinet design priced at $119.99, great for condos and apartments.
 3. SNDOAS Under Cabinet 30 inch,Stainless Steel Range Hood with 500 ... ($168.44): 30-inch under cabinet stainless steel range hood priced at $168.44 with strong 500 CFM airflow.
 4. hOmeLabs 30 inch Wall Mount Range Hood Exhaust Fan for ... ($119.99): 30-inch wall mount range hood priced at $119.99 featuring an adjustable chimney and 3 suction speeds.
-5. FIREGAS Range Hood 30 inch,Wall Mount Range Hood in Stainless ... ($189.99): 30-inch wall mount range hood priced at $189.99 with a touch control panel and quiet operation.",0.0,19.2,1.8,308.2,329.2
+5. FIREGAS Range Hood 30 inch,Wall Mount Range Hood in Stainless ... ($189.99): 30-inch wall mount range hood priced at $189.99 with a touch control panel and quiet operation.",0.0,20.9,2.3,347.1,370.3
 q05,test,5,1,,True,True,0,0,0,0,0,119,False,59,[],"[""B078XM112S"", ""B00GLBC5TQ"", ""B07GC8DDQQ"", ""B01DNYOKHS"", ""B07PF6XCL3""]","[""B078XM112S"", ""B00GLBC5TQ"", ""B07GC8DDQQ"", ""B01DNYOKHS"", ""B07PF6XCL3""]","Here are water filters for various coffee makers priced under $10.
 1. Premium Replacement Charcoal Water Filters for Cuisinart Coffee Machines (12) ($8.99): Charcoal water filters for Cuisinart machines priced at $8.99.
 2. Water Filter for Mr Coffee 113035-001-000 WFF Coffeemaker, Set of ... ($9.99): Replacement water filters for Mr Coffee priced at $9.99.
 3. Mr. Coffee Replacement Coffee Maker Water Filter ($9.50): Mr. Coffee replacement water filter priced at $9.50.
 4. Pack of 12 Replacement Charcoal Water Filters By Housewares Solutions ... ($8.99): Charcoal water filters for Keurig brewers priced at $8.99.
-5. Cuisinart Compatible Replacement Charcoal Water Filters for Coffee Makers - ... ($7.00): Replacement charcoal water filters for Cuisinart and Braun coffee makers priced at $7.00.",0.0,16.7,1.8,185.7,204.2
+5. Cuisinart Compatible Replacement Charcoal Water Filters for Coffee Makers - ... ($7.00): Replacement charcoal water filters for Cuisinart and Braun coffee makers priced at $7.00.",0.0,16.1,1.7,178.0,195.8
 q06,test,5,1,,True,True,0,0,0,0,0,138,True,73,[],"[""B088TTJ7HZ"", ""B083FDCGR1"", ""B07BCD8BBL"", ""B09DD6D48V"", ""B098X76P2G""]","[""B088TTJ7HZ"", ""B083FDCGR1"", ""B07BCD8BBL"", ""B09DD6D48V"", ""B098X76P2G""]","Here are several dishwasher rack wheels priced under $12 that match your needs.
 1. Kitchenaid Dishwasher Rack Wheels WPW10195417 W10195417 Whirlpool Dishwasher Wheels Lower ... ($11.95): Compatible with Whirlpool, Kenmore, and KitchenAid dishwashers, priced at $11.95.
 2. Upgrade 8 Pack 165314 Dishwasher Lower Rack Wheels by Beaquicy- ... ($8.27): An 8-pack compatible with Bosch and Kenmore dishwashers, priced at $8.27.
 3. Maxdot Durable 165314 Dishwasher Lower Rack Wheel Replacement, Fit for ... ($9.99): An 8-pack replacement set for Bosch and Kenmore dishwashers, priced at $9.99.
 4. W10195416v Kitchenaid Dishwasher Parts W10195416v Ultra Durable W10195416 Lower Dishwasher ... ($7.95): A durable lower rack wheel replacement compatible with Whirlpool and Kenmore, priced at $7.95.
-5. W10195416 Pack of 4 W10195416V Whirlpool Kitchenaid Dishrack Wheels AP5983730 ... ($11.95): A 4-pack of dishrack wheels compatible with Whirlpool and KitchenAid, priced at $11.95.",0.0,23.7,1.7,187.7,213.2
+5. W10195416 Pack of 4 W10195416V Whirlpool Kitchenaid Dishrack Wheels AP5983730 ... ($11.95): A 4-pack of dishrack wheels compatible with Whirlpool and KitchenAid, priced at $11.95.",0.0,21.1,1.8,190.3,213.3
 q07,dev,5,1,,True,True,0,0,0,0,0,109,False,57,[],"[""B00F6UMCP0"", ""B088MFWDKC"", ""B01HP14RJ6"", ""B00CX10OJ6"", ""B074T489X3""]","[""B00F6UMCP0"", ""B088MFWDKC"", ""B01HP14RJ6"", ""B00CX10OJ6"", ""B074T489X3""]","Here are heavy duty washer drain pumps and accessories priced over $30 that match your request.
 1. Supco LP30913 Washer Drain Pump Replaces W10130913, W10730972, 8540024, 8540025, ... ($46.68): Supco washer drain pump priced at $46.68.
 2. ERP W10876600 Washer Drain Pump ($53.60): ERP washer drain pump priced at $53.60.
 3. ERP W10661045 Washer Drain Pump ($32.00): ERP washer drain pump priced at $32.00.
 4. Supco LP397 Washer Drain Pump Replaces W10276397, AP6018417, PS11751719, WPW10276397VP ($46.99): Supco washer drain pump priced at $46.99.
-5. 36"" x 36"" 2.5"" Heavy Duty Washer Machine Drain Pan ... ($185.98): DR Quality Parts heavy duty stainless steel washer drain pan priced at $185.98.",0.0,22.3,1.8,175.7,199.8
+5. 36"" x 36"" 2.5"" Heavy Duty Washer Machine Drain Pan ... ($185.98): DR Quality Parts heavy duty stainless steel washer drain pan priced at $185.98.",0.0,18.0,1.8,173.6,193.3
 q08,dev,5,1,,True,True,0,0,0,0,0,54,False,28,[],"[""B003GDID4I"", ""B09FYFLB8G"", ""B000AST3AK"", ""B00126NABC"", ""B01IF7MCPU""]","[""B00126NABC"", ""B000AST3AK""]","Several genuine GE refrigerator water filters are available to fit your needs.
 1. GE MSWF Refrigerator Water Filter | Certified to Reduce Lead, ... ($36.99): Genuine GE MSWF water filter priced at $36.99.
-2. GE MWF Refrigerator Water Filter | Certified to Reduce Lead, ... ($46.98): Genuine GE MWF water filter priced at $46.98.",0.0,24.4,1.8,176.5,202.7
+2. GE MWF Refrigerator Water Filter | Certified to Reduce Lead, ... ($46.98): Genuine GE MWF water filter priced at $46.98.",0.0,24.5,1.9,183.0,209.4
 q09,test,5,1,,True,True,0,0,0,0,0,35,False,24,[],"[""B09QYZ18YD"", ""B0BLMQ5ZZN"", ""B00N9AWVHS"", ""B07Q59JFJJ"", ""B081JBKY7K""]","[""B0BLMQ5ZZN""]","Here is the Frigidaire ice maker assembly kit matching your request.
-1. Frigidaire IM117000 IM11700 Ice Maker Kit, One Size, White ($79.00): This is a genuine OEM Frigidaire Refrigerator Ice Maker Kit priced at $79.00.",0.0,21.1,1.7,187.1,210.0
+1. Frigidaire IM117000 IM11700 Ice Maker Kit, One Size, White ($79.00): This is a genuine OEM Frigidaire Refrigerator Ice Maker Kit priced at $79.00.",0.0,21.0,1.6,158.0,180.6
 q10,test,5,1,,True,True,0,0,0,0,0,67,False,41,[],"[""B0BW3ZYJQ5"", ""B0BVMJ6NSZ"", ""B0C4TLWPCD"", ""B0C5MQQ7J9"", ""B0C586PNZ9""]","[""B0BW3ZYJQ5"", ""B0C4TLWPCD""]","Here are the best beverage refrigerators for storing both cans and wine from the catalog.
 1. BODEGA 24 Inch Beverage and Wine Cooler, Built-in and Freestanding ... ($999.99): Dual cooling zones designed to hold both cans and wine bottles with independent temperature control.
-2. Antarctic Star 26 Bottle Wine Cooler/Cabinet Beverage Refrigerator Mini Wine ... ($169.99): Provides storage capacity suitable for both wine bottles and canned beverages.",0.0,16.0,1.8,173.7,191.6
+2. Antarctic Star 26 Bottle Wine Cooler/Cabinet Beverage Refrigerator Mini Wine ... ($169.99): Provides storage capacity suitable for both wine bottles and canned beverages.",0.0,17.1,1.7,209.0,227.9
 q11,test,5,1,,True,True,0,0,0,0,0,172,True,105,[],"[""B095PCMFBW"", ""B0C6KFX9DC"", ""B08NSS5M62"", ""B08NTC38ML"", ""B0BKYQYK8X""]","[""B095PCMFBW"", ""B0C6KFX9DC"", ""B08NSS5M62"", ""B08NTC38ML"", ""B0BKYQYK8X""]","Here are compact countertop dishwasher options well-suited for a small apartment.
 1. COSTWAY Portable Countertop Dishwasher, Compact Dishwasher with 5 L Built-in ... ($289.99): Compact design measuring 18"" x 17.5"" x 18"" with 5 washing programs and a 5 L built-in water tank, priced at $289.99.
 2. Portable Countertop Dishwashers, NOVETE Compact Dishwashers with 5 L Built-in ... ($359.99): Measures 16.9 x 16.8 x 18.1 inches, holds 4 full place settings, features a 5 L built-in water tank, and costs $359.99.
 3. Countertop Dishwasher, Aikoper Portable Compact Dishwasher with 6L Built-in Water ... (not listed): Portable and compact design measuring 17.13x16.54x18.31 inches with a 6L built-in water tank and 5 cleaning modes.
 4. Countertop Dishwasher, Aikoper Portable Compact Dishwasher with 6L Built-in Water ... (not listed): Compact dishwasher featuring a 6L built-in water tank, 5 cleaning modes, and an auto-opening door at the end of the cycle.
-5. COMFEE’ Countertop Dishwasher, Energy Star Portable Dishwasher, 6 Place Settings, ... ($289.99): Compact 6 place setting dishwasher with 8 washing programs, priced at $289.99.",0.0,19.0,1.6,201.2,221.8
+5. COMFEE’ Countertop Dishwasher, Energy Star Portable Dishwasher, 6 Place Settings, ... ($289.99): Compact 6 place setting dishwasher with 8 washing programs, priced at $289.99.",0.0,21.6,2.4,228.8,252.7
 q12,dev,5,1,,True,True,0,0,0,0,0,71,False,46,[],"[""B08P1MNKYD"", ""B08YBGCNHP"", ""B0BHVB8BF4"", ""B076H8VB5Z"", ""B07B9H7GMN""]","[""B08P1MNKYD"", ""B07B9H7GMN""]","We found multiple compatible water filters for your Samsung refrigerator, including options from both Samsung and K&J.
 1. DA29-00020B Refrigerator Water Filter, Compatible with Samsung Refrigerator Water Filter ($35.99): True Samsung water filter priced at $35.99 that provides clean water and protects refrigerator components.
-2. K&J Replacement Samsung Compatible Refrigerator Water Filter for DA2900020B, RF263BEAESR, ... ($23.81): K&J replacement compatible refrigerator water filter priced at $23.81 (2-pack) that improves water taste.",0.0,26.1,1.8,176.8,204.6
+2. K&J Replacement Samsung Compatible Refrigerator Water Filter for DA2900020B, RF263BEAESR, ... ($23.81): K&J replacement compatible refrigerator water filter priced at $23.81 (2-pack) that improves water taste.",0.0,47.6,3.0,191.0,241.7
 q13,dev,5,1,,True,True,0,0,0,0,0,153,True,86,[],"[""B087Z3MM2V"", ""B07BR7MBPP"", ""B07RHRXPSF"", ""B01LYMZYOO"", ""B00536VQE0""]","[""B087Z3MM2V"", ""B07BR7MBPP"", ""B07RHRXPSF"", ""B01LYMZYOO"", ""B00536VQE0""]","The available products are anti-vibration pads designed to reduce noise and shaking, but none are specific internal replacement parts to stop a dryer from squeaking.
 1. Anti Vibration Pads for Washing Machine – 4-Piece Set Anti ... (not listed): JIANZHAN anti vibration pads offer noise reduction and floor grip for dryers.
 2. Super Silent Washer and Dryer Antivibration Pads – Best Washing ... ($10.90): Get Organized antivibration pads priced at $10.90 help stabilize washers and dryers.
 3. STOP SHAKES Anti Vibration Pads for washer machine, washer and ... ($23.95): QEIARA anti vibration pads priced at $23.95 reduce noise associated with operation.
 4. 4 Pack Anti Vibration Pads for Washing Machine - Durable, ... (not listed): Brentmoor shock absorber pads provide noise reduction for laundry appliances.
-5. Anti-walk Silent Feet - Anti-Vibration Pads for Washing Machines and ... ($39.95): The Vibration Solution silent feet priced at $39.95 absorb vibrations and noise while doing laundry.",0.0,25.8,1.9,193.3,221.0
+5. Anti-walk Silent Feet - Anti-Vibration Pads for Washing Machines and ... ($39.95): The Vibration Solution silent feet priced at $39.95 absorb vibrations and noise while doing laundry.",0.0,34.4,2.2,209.0,245.5
 q14,test,5,1,,True,True,0,0,0,0,0,110,False,50,[],"[""B07GC8DDQQ"", ""B078XMNTFQ"", ""B07QXJVVMY"", ""B077HYLLMJ"", ""B078XM112S""]","[""B07GC8DDQQ"", ""B078XMNTFQ"", ""B07QXJVVMY"", ""B077HYLLMJ"", ""B078XM112S""]","We found several coffee machine water filters designed to remove chlorine and improve taste.
 1. Mr. Coffee Replacement Coffee Maker Water Filter ($9.50): Removes 97% of chlorine and improves taste for $9.50.
 2. Premium Replacement Charcoal Water Filters for Cuisinart Coffee Machines (24) ($13.99): Removes chlorine and impurities for $13.99.
 3. Replacement Coffee Maker Water Filter with Frame for Mr. Coffee ... ($8.77): Removes 97% of chlorine from water for $8.77.
 4. Coffee Machine Universal Replacement Fit Charcoal Water Filters By iPartsPlusMore ... (not listed): Removes chlorine and odors with activated charcoal.
-5. Premium Replacement Charcoal Water Filters for Cuisinart Coffee Machines (12) ($8.99): Removes chlorine and impurities for $8.99.",0.0,25.3,2.0,153.1,180.4
+5. Premium Replacement Charcoal Water Filters for Cuisinart Coffee Machines (12) ($8.99): Removes chlorine and impurities for $8.99.",0.0,32.0,2.0,180.4,214.3
 q15,test,5,1,,True,True,0,0,0,0,0,158,True,93,[],"[""B0BQJC5Z19"", ""B0C269CC8F"", ""B09QRZMDHC"", ""B0C6LP4DFV"", ""B0C2665THZ""]","[""B0BQJC5Z19"", ""B0C269CC8F"", ""B09QRZMDHC"", ""B0C6LP4DFV"", ""B0C2665THZ""]","These countertop ice makers produce soft, chewable nugget ice suitable for parties and home use.
 1. Kndko Nugget Ice Maker Countertop,10,000pcs/33lbs/Day,Pebble Ice Maker with Self-Cleaning,Crushed Ice ... ($235.81): Produces 33 lbs of soft, chewable nugget ice per day with a self-cleaning feature, priced at $235.81.
 2. FRIGIDAIRE Gallery EFIC255 Countertop Crunchy Chewable Nugget Ice Maker, 44lbs ... ($379.99): Makes crunchy, chewable nugget ice quickly, yielding up to 44 lbs per day for $379.99.
 3. Gevi Household Nugget Ice Maker with Thick Insulation | Portable ... ($389.99): Compact pellet ice machine yielding up to 29 lbs per day of chewable ice for $389.99.
 4. Nugget Countertop Ice Maker with Soft Chewable Ice, Automatic 34lbs ... ($289.99): Pebble ice maker producing 34 lbs of chewable nugget ice in 24 hours for $289.99.
-5. Frigidaire EFIC237 Countertop Crunchy Chewable Nugget Ice Maker, 44lbs per ... ($237.91): Countertop nugget ice maker producing 44 lbs per day of crunchy, chewable ice for $237.91.",0.0,17.4,1.7,181.2,200.3
+5. Frigidaire EFIC237 Countertop Crunchy Chewable Nugget Ice Maker, 44lbs per ... ($237.91): Countertop nugget ice maker producing 44 lbs per day of crunchy, chewable ice for $237.91.",0.0,17.6,1.9,202.4,221.9
 q16,dev,5,1,,True,True,0,0,0,0,0,134,True,73,[],"[""B07RP5CW35"", ""B00OMR17TA"", ""B07L13NDXY"", ""B07RS9Q8F7"", ""B07XP2J7MG""]","[""B07RP5CW35"", ""B00OMR17TA"", ""B07L13NDXY"", ""B07RS9Q8F7"", ""B07XP2J7MG""]","Here are replacement drain pump options that fix a washing machine that will not drain water.
 1. 137221600 Washer Drain Pump By AMI PARTS - Replaces AP5684706, ... ($22.77): Fixes the drum will not drain water and is priced at $22.77.
 2. General Electric WH23X10030 Washing Machine Pump ($34.97): Fixes the washing machine when it will not drain, priced at $34.97.
 3. W10130913 Drain Pump & WP356138 Spring Tension Hose Clamp by ... (not listed): Fixes washers that do not drain or spin properly.
 4. AMI PARTS 4681EA2001T Water Drain Pump AP5328388 Washer Washing Machine ... ($18.27): Resolves the issue where a washer will not drain, priced at $18.27.
-5. 4681EA2001T Washer Drain Pump Motor by AMI PARTS Washer Drain ... ($25.27): Fixes symptoms where the washing machine will not drain, priced at $25.27.",0.0,24.9,1.8,163.1,189.9
+5. 4681EA2001T Washer Drain Pump Motor by AMI PARTS Washer Drain ... ($25.27): Fixes symptoms where the washing machine will not drain, priced at $25.27.",0.0,27.1,2.2,211.0,240.3
 q17,test,5,1,,True,True,0,0,0,0,0,136,True,79,[],"[""B000OSI48I"", ""B0764GN7XW"", ""B01CFICWUU"", ""B01LQQDLQ6"", ""B004EZT38M""]","[""B000OSI48I"", ""B0764GN7XW"", ""B01CFICWUU"", ""B01LQQDLQ6"", ""B004EZT38M""]","We found several replacement wick filters suitable for humidifiers, including options for specific models.
 1. Sears Kenmore 15508 Humidifier Replacment Filter (Aftermarket) ($23.07): Filters Now Sears Kenmore 15508 Humidifier Replacement Filter priced at $23.07.
 2. 4-Pack Air Filter Factory Replacement For Sears Kenmore 14911, 32-14911, ... ($19.97): Air Filter Factory Replacement for Sears Kenmore 14911, 32-14911, ES12 Humidifier Wick Filters (4-Pack) priced at $19.97.
 3. Genuine Kenmore 32-14911 Humidifier Wick Filter, 4 Pack ($45.75): Genuine Kenmore 32-14911 Humidifier Wick Filter, 4 Pack priced at $45.75.
 4. Air Filter Factory Replacement For Sears Kenmore 14906 Humidifier Filter ($14.97): Air Filter Factory Replacement for Sears Kenmore 14906 Humidifier Filter priced at $14.97.
-5. BestAir HW14-PDQ-4 Extended Life Humidifier Replacement Paper Wick Humidifier Filter, ... ($18.49): BestAir HW14-PDQ-4 Extended Life Humidifier Replacement Paper Wick Humidifier Filter priced at $18.49.",0.0,23.4,1.9,171.7,197.1
+5. BestAir HW14-PDQ-4 Extended Life Humidifier Replacement Paper Wick Humidifier Filter, ... ($18.49): BestAir HW14-PDQ-4 Extended Life Humidifier Replacement Paper Wick Humidifier Filter priced at $18.49.",0.0,26.3,2.0,221.4,249.7
 q18,dev,5,1,,True,True,0,0,0,0,0,132,True,72,[],"[""B01F3NIXM0"", ""B004443WFI"", ""B003DA62T2"", ""B0BCVVJ2HW"", ""B0C64XWQX9""]","[""B01F3NIXM0"", ""B004443WFI"", ""B003DA62T2"", ""B0BCVVJ2HW"", ""B0C64XWQX9""]","Here are the available refrigerator water filter options that are not from Samsung.
 1. Refrigerator Water Filter (fits in place of GE model MWF) ... ($62.00): An economical alternative priced at $62.00 that reduces chlorine, taste, and odors.
 2. Bosch 640565 Premium Refrigerator Water & Ice Filter, 1-Pack ($71.98): A Bosch premium filter priced at $71.98 offering up to 6-months of filtration life.
 3. Whirlpool 4378411RB In-Line Refrigerator Ice and Water Filter ($23.97): A genuine OEM replacement part from Whirlpool priced at $23.97.
 4. Amazon Basics Replacement GE MSWF Refrigerator Water Filter Cartridge - ... ($12.16): Amazon Basics replacement filter priced at $12.16 featuring advanced carbon filtration.
-5. Waterdrop MSWF Refrigerator Water Filter, Replacement for GE® MSWF, 101820A, ... ($16.99): A Waterdrop replacement filter priced at $16.99 with coconut shell carbon block.",0.0,23.0,1.9,163.6,188.6
+5. Waterdrop MSWF Refrigerator Water Filter, Replacement for GE® MSWF, 101820A, ... ($16.99): A Waterdrop replacement filter priced at $16.99 with coconut shell carbon block.",0.0,27.1,1.9,211.4,240.3
 q19,test,5,1,,True,True,0,0,0,0,0,72,False,45,[],"[""B01AYKYBAA"", ""B00C8C5ISW"", ""B09KRKT9TK"", ""B07PWQF712"", ""B0872XWMS5""]","[""B01AYKYBAA"", ""B0872XWMS5""]","We found two portable ice makers that fit your preference and are not made of stainless steel.
 1. DELLA Compact Portable (Red) Ice Maker Machine 2 Size Cube ... (not listed): This portable ice maker features a compact red design and efficient ice cube making.
-2. OKADA Countertop Portable Ice Maker Machine - 9 Ice Cubes ... ($200.00): This portable countertop ice maker is priced at $200.00 and has a silver finish.",0.0,17.2,1.9,168.1,187.2
+2. OKADA Countertop Portable Ice Maker Machine - 9 Ice Cubes ... ($200.00): This portable countertop ice maker is priced at $200.00 and has a silver finish.",0.0,18.7,1.8,182.5,203.0
 q20,test,5,1,,True,True,0,0,0,0,0,91,False,52,[],"[""B0BZS5P6KY"", ""B08R8G35L8"", ""B09Z1TM84T"", ""B09RGKSFSY"", ""B07TKGJMJT""]","[""B0BZS5P6KY"", ""B08R8G35L8"", ""B09RGKSFSY""]","Here are excellent reusable coffee filter options that eliminate the need for disposable paper filters.
 1. Reusable Coffee Filter, 2 Pack Basket Coffee Filters 8-12 Cup ... ($11.99): Stainless steel mesh filter priced at $11.99 that replaces paper filters.
 2. Reusable Coffee Filters Basket, 2 Pack for 8-12 Cup Mr-Coffee, ... ($11.47): Basket-style nylon mesh filter priced at $11.47 designed to save on filter papers.
-3. CoffeeSock Reusable Coffee Filters - Hario v60 01 Small (2 ... ($14.99): Organic cotton cloth filters priced at $14.99 offering a zero-waste, paperless brewing alternative.",0.0,25.4,2.0,186.8,214.2
+3. CoffeeSock Reusable Coffee Filters - Hario v60 01 Small (2 ... ($14.99): Organic cotton cloth filters priced at $14.99 offering a zero-waste, paperless brewing alternative.",0.0,28.1,2.0,196.0,226.2
 q21,dev,5,1,,True,True,0,0,0,0,0,138,True,73,[],"[""B07CQS1ZDQ"", ""B07S5YX62T"", ""B01N4P324S"", ""B072Z89BGQ"", ""B00MGRCX28""]","[""B07CQS1ZDQ"", ""B07S5YX62T"", ""B01N4P324S"", ""B072Z89BGQ"", ""B00MGRCX28""]","Here are the best cycling thermostat and replacement parts matching your request.
 1. Lifetime Warranty WP3387134 3387134 Dryer Cycling Thermostat Replacement Part by ... ($8.49): Offers a standalone 3387134 cycling thermostat with a lifetime warranty for $8.49.
 2. 3387134 Cycling Thermostat 2 * 3392519 Dryer Thermal Fuse 3977767 ... ($9.27): Includes a 3387134 cycling thermostat alongside thermal fuses and high-limit thermostats for $9.27.
 3. 3387134 & 3392519 - Cycling Thermostat & Thermal Fuse for ... ($6.98): Provides a 3387134 cycling thermostat and thermal fuse kit for $6.98.
 4. 3387134 & 3392519 Dryer Cycling Thermostat & Thermal Fuse Replacement ... ($8.29): Features a full kit set with a 3387134 cycling thermostat and thermal fuse for $8.29.
-5. PS344510 AND PS345113 DRYER CYCLING THERMOSTAT WITH INTERNAL BIAS HEATER ... ($11.89): Provides a cycling thermostat and thermal fuse set for $11.89.",0.0,23.3,1.9,191.9,217.2
+5. PS344510 AND PS345113 DRYER CYCLING THERMOSTAT WITH INTERNAL BIAS HEATER ... ($11.89): Provides a cycling thermostat and thermal fuse set for $11.89.",0.0,25.3,2.0,198.1,225.4
 q22,test,5,1,,True,True,0,0,0,0,0,80,False,48,[],"[""B07V712CBJ"", ""B00DM8KZBQ"", ""B00RY3MXAG"", ""B0854DD5X7"", ""B005NC9PP6""]","[""B07V712CBJ"", ""B00DM8KZBQ"", ""B0854DD5X7""]","We do not carry the exact W10425238 drain pump, but we offer the W10536347 drain pump which is a common alternative.
 1. W10536347 Whirlpool Cabrio Washer Drain Pump Askoll W10155921 W10049390 W10281682 ... ($19.95): Offers an exact equivalent W10536347 washer drain pump for $19.95.
 2. Whirlpool W10536347 Drain Pump ($74.67): Genuine Whirlpool W10536347 drain pump available for $74.67.
-3. [2023 UPGRADED]W10536347 W10155921 W10049390 Washer Drain Pump by Beaquicy with ... ($23.67): Beaquicy W10536347 upgrade washer drain pump priced at $23.67.",0.0,22.6,2.0,165.2,189.9
-q23,dev,0,0,no_result,False,True,0,0,0,0,0,25,False,0,[],[],[],No products in the catalog match all of your constraints. Removing the category constraint would give 36 matching products. Other options: remove brand (3 products).,0.0,26.6,2.9,6.4,35.9
-q24,test,0,0,no_result,False,True,0,0,0,0,0,25,False,0,[],[],[],No products in the catalog match all of your constraints. Removing the brand constraint would give 44 matching products. Other options: remove category (35 products).,0.0,22.5,1.6,3.2,27.2
-q25,test,0,0,no_result,False,True,0,0,0,0,0,19,False,0,[],[],[],No products in the catalog match all of your constraints. Removing the category constraint would give 115 matching products.,0.0,30.5,1.8,10.2,42.5
+3. [2023 UPGRADED]W10536347 W10155921 W10049390 Washer Drain Pump by Beaquicy with ... ($23.67): Beaquicy W10536347 upgrade washer drain pump priced at $23.67.",0.0,25.3,2.1,185.7,213.1
+q23,dev,0,0,no_result,False,True,0,0,0,0,0,25,False,0,[],[],[],No products in the catalog match all of your constraints. Removing the category constraint would give 36 matching products. Other options: remove brand (3 products).,0.0,28.0,5.0,10.8,43.8
+q24,test,0,0,no_result,False,True,0,0,0,0,0,25,False,0,[],[],[],No products in the catalog match all of your constraints. Removing the brand constraint would give 44 matching products. Other options: remove category (35 products).,0.0,29.1,1.8,3.7,34.6
+q25,test,0,0,no_result,False,True,0,0,0,0,0,19,False,0,[],[],[],No products in the catalog match all of your constraints. Removing the category constraint would give 115 matching products.,0.0,26.2,1.5,6.2,33.9
