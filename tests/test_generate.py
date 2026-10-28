@@ -109,3 +109,11 @@ def test_no_result_path_needs_no_llm_and_suggests_best_relaxation(tmp_path):
 
 def test_template_answer_full_list():
     assert template_answer(items(), 2).startswith("Here are the top 2 matching products.")
+
+
+def test_validator_allows_brand_the_user_named_and_ignores_common_word_brands():
+    # 28 Oct dev queries: q18 "not samsung" answer was rejected for repeating the user's brand;
+    # q21 "best" (adjective) was matched to the catalog brand "Best".
+    a = answer("Unlike Samsung, this GE model is the best value at $129.99.", [("B1", "Not a SAMSUNG part.")])
+    errors = validate_answer(a, items(), {150.0}, BRANDS + ["Best", "SAMSUNG"], query="ice maker, not samsung")
+    assert errors == []
