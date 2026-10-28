@@ -216,3 +216,19 @@ def test_report_tables_average_s6_users_and_pair_systems():
     assert s.loc["S5", "zero_result_rate@5"] == 1.0                  # 1 item returned < 5
     d = paired_table(pq.reset_index(), pairs=(("S5", "S6"),)).iloc[0]
     assert d["delta"] == pytest.approx((1 + u2) / 2 - 1) and d["queries"] == 1
+
+
+def test_error_tags_parse_error_over_filtering_and_drift():
+    from src.evaluate import error_tags
+
+    catalog = pd.DataFrame({"product_id": ["a", "b", "c"], "price": [10.0, 20.0, np.nan],
+                            "category": ["Parts", "Ice Makers", "Parts"], "brand": ["GE", "GE", "GE"],
+                            "title": ["a", "b", "c"], "features": ["", "", ""]})
+    gold = gold_row(query_id="q1", gold_brand="GE")
+    parsed = pd.Series({"query_id": "q1", "semantic_query": "x", "max_price": np.nan, "min_price": np.nan,
+                        "category": "Ice Makers", "brand": "GE", "exclude_terms": []})   # invented category
+    qrels = pd.DataFrame({"query_id": ["q1", "q1"], "product_id": ["a", "b"], "grade": [2, 1]})
+    per_query = pd.DataFrame({"query_id": ["q1", "q1"], "system": ["S5", "S6"], "NDCG@10": [0.6, 0.4]})
+    tags = error_tags("q1", gold, parsed, per_query, qrels, catalog)
+    # "a" fits gold but is removed by the invented category; only 1 product passes the filters.
+    assert tags == ["parse error", "over-filtering", "catalog gap", "personalization drift"]

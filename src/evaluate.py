@@ -742,6 +742,79 @@ def paired_table(per_query: pd.DataFrame, metric: str = "NDCG@10", pairs=PAIRS,
     return pd.DataFrame(rows)
 
 
+FAIL_NDCG = 0.5      # a query "fails" for error analysis when S5 NDCG@10 is below this
+DRIFT = 0.1          # personalization drift: S6 NDCG@10 at least this much below S5
+
+
+def error_tags(qid: str, gold: pd.Series, parsed_row: pd.Series, per_query: pd.DataFrame, qrels: pd.DataFrame,
+               catalog: pd.DataFrame, generation: pd.DataFrame | None = None) -> list[str]:
+    """Spec 10.8 taxonomy, assigned by deterministic rules (verified by reading the examples):
+
+    parse error: any hard field differs from gold. over-filtering: a product graded >= 1 that satisfies the
+    gold limits is removed by the parsed hard filters. catalog gap: a product graded >= 1 has no price under
+    an active price filter, or fewer than 10 products satisfy the filters. semantic retrieval failure: S5 NDCG@10 < FAIL_NDCG with
+    none of the above. personalization drift: S6 NDCG@10 < S5 - DRIFT. grounding failure: any rejected answer.
+    """
+    from src.filters import build_mask, has_price_filter
+
+    m = per_query[per_query["query_id"] == qid].set_index("system")
+    tags = []
+    counts = parse_counts(parsed_row.to_frame().T, gold.to_frame().T)
+    if counts[counts.field.isin(HARD_FIELDS)][["fp", "fn"]].to_numpy().sum() > 0:
+        tags.append("parse error")
+    pq = to_parsed_query(parsed_row)
+    rel = qrels[(qrels["query_id"] == qid) & (qrels["grade"] >= 1)]["product_id"]
+    row_of = pd.Series(np.arange(len(catalog)), index=catalog["product_id"])
+    rel_rows = row_of.reindex(rel).dropna().astype(int).to_numpy()
+    mask = build_mask(catalog, pq, use_exclusions=False)
+    if len(rel_rows) and (~mask[rel_rows]).any():
+        unpriced = catalog["price"].isna().to_numpy()[rel_rows]
+        fits_gold = np.array([satisfies_gold(catalog.iloc[r], gold) for r in rel_rows])
+        if (~mask[rel_rows] & fits_gold).any():
+            tags.append("over-filtering")
+        if (~mask[rel_rows] & unpriced & has_price_filter(pq)).any():
+            tags.append("catalog gap")
+    if mask.sum() < 10 and "catalog gap" not in tags:
+        tags.append("catalog gap")
+    s5 = m["NDCG@10"].get("S5", np.nan)
+    if not tags and not np.isnan(s5) and s5 < FAIL_NDCG:
+        tags.append("semantic retrieval failure")
+    s6 = m["NDCG@10"].get("S6", np.nan)
+    if not np.isnan(s5) and not np.isnan(s6) and s6 < s5 - DRIFT:
+        tags.append("personalization drift")
+    if generation is not None:
+        g = generation[generation["query_id"] == qid]
+        if len(g) and g["errors"].iat[0] not in ("[]", "", None):
+            tags.append("generation grounding failure")
+    return tags
+
+
+def error_analysis(queries: pd.DataFrame, parsed: pd.DataFrame, per_query: pd.DataFrame, qrels: pd.DataFrame,
+                   catalog: pd.DataFrame, generation: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per query: S5/S6 NDCG@10, failed flag and tags. Failed = S5 NDCG@10 < FAIL_NDCG or any tag."""
+    parsed_by_id = parsed.set_index("query_id")
+    rows = []
+    for _, gold in queries.iterrows():
+        qid = gold["query_id"]
+        m = per_query[per_query["query_id"] == qid].set_index("system")["NDCG@10"]
+        parsed_row = parsed_by_id.loc[qid].copy()
+        parsed_row["query_id"] = qid
+        tags = error_tags(qid, gold, parsed_row, per_query, qrels, catalog, generation)
+        s5 = m.get("S5", np.nan)
+        rel = qrels[(qrels["query_id"] == qid) & (qrels["grade"] >= 1)]["product_id"]
+        prod = catalog.set_index("product_id")
+        conflicts = sum(not satisfies_gold(prod.loc[p], gold) for p in rel if p in prod.index)
+        if gold["stratum"] == "no_result":     # success = nothing returned (spec 10.1 tests no-result handling)
+            n5 = per_query[(per_query.query_id == qid) & (per_query.system == "S5")]["n_returned"]
+            failed = bool(len(n5) and n5.iat[0] > 0)
+        else:
+            failed = bool(tags) or (not np.isnan(s5) and s5 < FAIL_NDCG)
+        rows.append({"query_id": qid, "stratum": gold["stratum"], "text": gold["text"], "S3": m.get("S3", np.nan),
+                     "S5": s5, "S6": m.get("S6", np.nan), "failed": failed, "tags": "; ".join(tags),
+                     "label_conflicts": conflicts})
+    return pd.DataFrame(rows)
+
+
 def run_report(cfg: dict, split: str = "test") -> None:
     """Phase 9: metrics with CIs, paired differences, zero-result rate, parse F1 and latency for one split."""
     from src.data import load_catalog
@@ -781,6 +854,12 @@ def run_report(cfg: dict, split: str = "test") -> None:
     hard = micro_f1(counts[counts.field.isin(HARD_FIELDS)])
     print(f"\nparse micro-F1 ({split}, hard fields): {hard['f1']:.3f} (P {hard['precision']:.3f}, R {hard['recall']:.3f}); "
           f"with exclusions {micro_f1(counts)['f1']:.3f}")
+    gen_path = RESULTS_DIR / "generation.csv"
+    ea = error_analysis(q, pred, per_query, qrels, catalog, pd.read_csv(gen_path) if gen_path.exists() else None)
+    ea.to_csv(RESULTS_DIR / f"{split}_error_analysis.csv", index=False)
+    tag_counts = ea["tags"].str.split("; ").explode().loc[lambda t: t != ""].value_counts()
+    print(f"\nerror analysis: {int(ea.failed.sum())}/{len(ea)} queries failed; tag counts: {tag_counts.to_dict()}; "
+          f"items graded >= 1 that violate gold limits: {int(ea.label_conflicts.sum())}")
     info = pd.read_csv(RESULTS_DIR / "run_info.csv")
     info = info[info.query_id.isin(q.query_id)]
     lat = info.groupby("system")["search_ms"].apply(lambda s: pd.Series(latency_summary(s))).unstack().round(2)
