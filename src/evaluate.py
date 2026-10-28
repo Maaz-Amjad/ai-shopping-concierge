@@ -369,13 +369,27 @@ def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequen
     return pd.DataFrame(run_rows), pd.DataFrame(shift_rows)
 
 
+def judged_only(runs: pd.DataFrame, qrels: pd.DataFrame) -> pd.DataFrame:
+    """Condensed lists: drop unjudged products and close the rank gaps (a fairer view for unpooled runs)."""
+    judged = set(zip(qrels["query_id"], qrels["product_id"]))
+    cond = runs[[(q, p) in judged for q, p in zip(runs["query_id"], runs["product_id"])]].copy()
+    cond["rank"] = cond.groupby(["system", "query_id"])["rank"].rank(method="first")
+    return cond
+
+
+def unjudged_share(runs: pd.DataFrame, qrels: pd.DataFrame, k: int = 10) -> pd.Series:
+    """Per system: share of top-k run rows with no relevance label."""
+    judged = set(zip(qrels["query_id"], qrels["product_id"]))
+    top = runs[runs["rank"] <= k]
+    return top.assign(u=[(q, p) not in judged for q, p in zip(top["query_id"], top["product_id"])])         .groupby("system")["u"].mean()
+
+
 def experiment_a(runs: pd.DataFrame, shift: pd.DataFrame, qrels: pd.DataFrame, k: int = 10) -> pd.DataFrame:
     """Per (user, weights, query): NDCG@k of S5 and S6, the change, the judged-only (condensed) change, and
     the share of S6's top-k that is unjudged (unjudged counts as grade 0 in the main numbers)."""
     judged = set(zip(qrels["query_id"], qrels["product_id"]))
     s5 = ranking_metrics(runs[runs["system"] == "S5"], qrels, ks=(k,)).set_index("query_id")[f"NDCG@{k}"]
-    cond = runs[[(q, p) in judged for q, p in zip(runs["query_id"], runs["product_id"])]].copy()
-    cond["rank"] = cond.groupby(["system", "query_id"])["rank"].rank(method="first")
+    cond = judged_only(runs, qrels)
     s5c = ranking_metrics(cond[cond["system"] == "S5"], qrels, ks=(k,)).set_index("query_id")[f"NDCG@{k}"]
     s6 = runs[runs["system"] != "S5"]
     m = ranking_metrics(s6, qrels, ks=(k,)).set_index(["system", "query_id"])[f"NDCG@{k}"]
@@ -581,9 +595,43 @@ def run_qrels() -> None:
           f"qrels {len(qrels)} rows ({(qrels.source == 'human').sum()} human)")
 
 
+def run_prefix(cfg: dict) -> pd.DataFrame:
+    """Spec 6: BGE query prefix vs none on DEV queries (S3-S5), scored on judged-only lists.
+
+    Decision rule fixed in advance: pick the setting with the higher mean S5 judged-only NDCG@10;
+    a difference under 0.01 keeps the prefix (the BGE recommendation; no re-judging needed).
+    """
+    import copy
+
+    queries, parsed = load_queries(), load_parsed()
+    dev = queries[queries["split"] == "dev"]
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    qrels = qrels[qrels["query_id"].isin(dev["query_id"])]
+    rows = []
+    for flag in (True, False):
+        c = copy.deepcopy(cfg)
+        c["embedding"]["query_instruction"] = flag
+        runs, _ = run_systems(dev, parsed, c, systems=("S3", "S4", "S5"), depth=10)
+        full = ranking_metrics(runs, qrels, ks=(10,)).groupby("system")["NDCG@10"].mean()
+        cond = ranking_metrics(judged_only(runs, qrels), qrels, ks=(10,)).groupby("system")["NDCG@10"].mean()
+        unj = unjudged_share(runs, qrels)
+        for system in ("S3", "S4", "S5"):
+            rows.append({"prefix": flag, "system": system, "NDCG@10": full.get(system, np.nan),
+                         "NDCG@10_judged_only": cond.get(system, np.nan), "unjudged@10": unj.get(system, np.nan)})
+    out = pd.DataFrame(rows)
+    out.to_csv(RESULTS_DIR / "prefix_dev.csv", index=False)
+    print(f"dev queries: {len(dev)}")
+    print(out.round(4).to_string(index=False))
+    s5 = out[out.system == "S5"].set_index("prefix")["NDCG@10_judged_only"]
+    keep = not (s5[False] - s5[True] >= 0.01)
+    print(f"S5 judged-only NDCG@10: prefix {s5[True]:.4f} vs none {s5[False]:.4f} -> "
+          f"query_instruction: {str(keep).lower()}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "qrels"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "qrels", "prefix"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -597,6 +645,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "qrels":
         run_qrels()
+        return
+    if args.action == "prefix":
+        run_prefix(cfg)
         return
 
     from src.data import load_catalog

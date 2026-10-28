@@ -183,3 +183,14 @@ def test_experiment_a_delta_condensed_and_unjudged_hand_computed():
     # Judged-only: S6 becomes [a, c] -> perfect; S5 stays [a, b].
     assert row["delta_NDCG@10_judged_only"] == pytest.approx(1 - 3 / ideal)
     assert row["unjudged@10"] == pytest.approx(1 / 3) and row["kendall_tau"] == 0.5
+
+
+def test_judged_only_closes_rank_gaps_and_unjudged_share():
+    from src.evaluate import judged_only, unjudged_share
+
+    qrels = pd.DataFrame({"query_id": ["q1", "q1"], "product_id": ["a", "c"], "grade": [2, 1]})
+    runs = pd.DataFrame({"system": ["S5"] * 3 + ["S3"], "query_id": ["q1"] * 4, "rank": [1, 2, 3, 1],
+                         "product_id": ["x", "a", "c", "a"]})
+    cond = judged_only(runs, qrels)
+    assert cond[cond.system == "S5"].sort_values("rank")[["product_id", "rank"]].values.tolist() == [["a", 1], ["c", 2]]
+    assert unjudged_share(runs, qrels).to_dict() == pytest.approx({"S3": 0.0, "S5": 1 / 3})
