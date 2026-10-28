@@ -27,7 +27,8 @@ Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be 
 | 6 Relevance labels: LLM judge + manual check | done: 659 pooled pairs judged (Gemini 3.8 Flash); 167 (25%) human-verified, agreement 81% exact / 92% relevant-vs-not |
 | 7 Personalization: `src/personalize.py` | done: user profiles, weighted re-ranking, cold start; next-item test (3,995 users) HitRate@10 blend 0.063 vs popularity 0.028 vs random 0.002 |
 | 8 Grounded answers: `src/generate.py`, `src/pipeline.py` | done: grounding validator + one regeneration + template fallback; 22/22 answers grounded (21 first try) |
-| 9-10 Test-set evaluation, report | in progress |
+| 9 Test-set evaluation: [04_evaluation](notebooks/04_evaluation.ipynb) | done (S6 provisional: 11% of its top 10 not yet labelled) |
+| 10 [Final report](docs/final_report.md) | draft complete; S6 numbers refreshed once labelling finishes |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -42,7 +43,26 @@ Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be 
 | S6 | S5 + personalization |
 
 Metrics: Precision@K, pooled Recall@K, NDCG@K, constraint adherence, parse F1, grounding rate, latency,
-with 95% bootstrap confidence intervals. Results will be added here when available.
+with 95% bootstrap confidence intervals.
+
+## Results (15 held-out test queries; details in the [final report](docs/final_report.md))
+
+| System | P@10 | NDCG@10 [95% CI] | Constraint adherence@10 |
+|---|---|---|---|
+| S1 TF-IDF | 0.46 | 0.41 [0.24, 0.59] | 0.43 |
+| S2 BM25 | 0.51 | 0.52 [0.33, 0.71] | 0.44 |
+| S3 dense | 0.67 | 0.66 [0.46, 0.83] | 0.63 |
+| S4 post-filter | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
+| S5 filter-first | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
+| S5x + exclusions | 0.81 | 0.76 [0.59, 0.91] | 1.00 |
+| S6 personalized (provisional) | 0.71 | 0.66 [0.52, 0.81] | 1.00 |
+
+- Query parsing F1 0.94 on test (target 0.85). Dense vs TF-IDF: +0.25 NDCG@10 [0.05, 0.47].
+- Filter-first and post-filter return the same top 10 on every test query (a neutral result); filter-first is cheaper.
+- Personalization: next-item HitRate@10 6.3% (blend) vs 2.8% (popularity); on query relevance it costs
+  -0.025 NDCG@10 [-0.052, -0.004] on judged items (S6's row above counts its unlabelled items as irrelevant).
+- Grounding: 22/22 answers grounded, 0 invented product IDs. Retrieval p95 11 ms; LLM generation p95 12.7 s (6 s
+  end-to-end target not met on the free tier).
 
 ## Setup
 

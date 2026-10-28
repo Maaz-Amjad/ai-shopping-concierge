@@ -80,15 +80,15 @@ errors, and logs each call. Over the whole project the pipeline used 61 Flash-Li
 
 | System | P@10 | NDCG@10 [95 % CI] | Adherence@10 |
 |---|---|---|---|
-| S1 TF-IDF | 0.46 | 0.41 [0.25, 0.59] | 0.43 |
+| S1 TF-IDF | 0.46 | 0.41 [0.24, 0.59] | 0.43 |
 | S2 BM25 | 0.51 | 0.52 [0.33, 0.71] | 0.44 |
-| S3 dense | 0.67 | 0.66 [0.47, 0.83] | 0.63 |
-| S4 post-filter | 0.79 | 0.75 [0.60, 0.90] | 1.00 |
-| S5 filter-first | 0.79 | 0.75 [0.60, 0.90] | 1.00 |
-| S5x + exclusions | 0.81 | 0.77 [0.60, 0.92] | 1.00 |
+| S3 dense | 0.67 | 0.66 [0.46, 0.83] | 0.63 |
+| S4 post-filter | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
+| S5 filter-first | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
+| S5x + exclusions | 0.81 | 0.76 [0.59, 0.91] | 1.00 |
 | S6 personalized (*provisional*) | 0.71 | 0.66 [0.52, 0.81] | 1.00 |
 
-Paired differences in NDCG@10: S1 → S3 **+0.25 [0.05, 0.47]**; S3 → S5 +0.10 [−0.14, 0.35]; S4 → S5 **0.00**;
+Paired differences in NDCG@10: S1 → S3 **+0.25 [0.05, 0.47]**; S3 → S5 +0.09 [−0.14, 0.34]; S4 → S5 **0.00**;
 S5 → S5x +0.01 [0.00, 0.04]; S5 → S6 −0.08 [−0.13, −0.04] counting unlabelled S6 items as irrelevant (−0.025 on
 judged items only, section 6.3). With 15 queries these are indicative, not significance claims.
 
@@ -100,7 +100,7 @@ judged items only, section 6.3). With 15 queries these are indicative, not signi
   and its candidate pool was smaller on 11 of 15 queries (median 60 vs 200), which limits re-ranking.
 
 A post-hoc view without the two no-result queries (whose ranking metrics reward returning *something*) gives NDCG@10 of
-0.44 (S1), 0.64 (S3) and 0.81 (S5); it is secondary because it was chosen after seeing the results.
+0.44 (S1), 0.64 (S3) and 0.80 (S5); it is secondary because it was chosen after seeing the results.
 
 ### 6.2 Query understanding
 
