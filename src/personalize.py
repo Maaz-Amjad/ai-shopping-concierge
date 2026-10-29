@@ -32,6 +32,7 @@ class Weights:
     def with_limits(self, factor: float) -> Weights:
         """Phase 13.3: keep `factor` of the personal weight when the request states hard limits; the rest moves to
         the semantic term (the shopper said what they want, so their history matters less)."""
+        factor = min(max(float(factor), 0.0), 1.0)            # a config typo can never make w_sem negative
         return Weights(self.sem + self.pers * (1 - factor), self.pers * factor, self.pop, self.rat)
 
     def cold_start(self) -> Weights:

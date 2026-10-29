@@ -679,6 +679,12 @@ def run_rating(cfg: dict, split: str = "dev") -> pd.DataFrame:
     return out
 
 
+def adaptive_rows(a: pd.DataFrame, limited: set[str], label: str, base_label: str) -> pd.DataFrame:
+    """Experiment-A rows under the adaptive rule: weights `label` for queries with limits, `base_label` otherwise."""
+    return a[(a["query_id"].isin(limited) & (a["weights"] == label)) |
+             (~a["query_id"].isin(limited) & (a["weights"] == base_label))]
+
+
 ADAPTIVE_GRID = (1.0, 0.5, 0.25, 0.0)   # Phase 13.3, pre-registered: share of w_pers kept when limits are stated
 
 
@@ -703,12 +709,11 @@ def run_adaptive(cfg: dict, split: str = "dev") -> pd.DataFrame:
     limited = {q for q in part["query_id"] if has_hard_limits(to_parsed_query(p_by_id.loc[q]))}
     base_label = weights_label(by_g[1.0])
     col = "delta_NDCG@10_judged_only"
-    per_q = {}
+    per_q, unjudged = {}, {}
     for g, w in by_g.items():
-        label = weights_label(w)
-        pick = a[((a["query_id"].isin(limited)) & (a["weights"] == label)) |
-                 (~a["query_id"].isin(limited) & (a["weights"] == base_label))]
+        pick = adaptive_rows(a, limited, weights_label(w), base_label)
         per_q[g] = pick.groupby("query_id")[col].mean()
+        unjudged[g] = pick["unjudged@10"].mean()            # under the rule as evaluated
     rows = []
     for g in ADAPTIVE_GRID:
         lim = per_q[g][per_q[g].index.isin(limited)]
@@ -716,7 +721,7 @@ def run_adaptive(cfg: dict, split: str = "dev") -> pd.DataFrame:
         rows.append({"g": g, "w_pers_with_limits": round(by_g[g].pers, 4), "queries": len(per_q[g]),
                      "limited_queries": len(lim), "delta_ndcg_judged_only": per_q[g].mean(),
                      "delta_ndcg_judged_only_limited": lim.mean(), "vs_g1": mean, "vs_g1_lo": lo, "vs_g1_hi": hi,
-                     "unjudged": a[a["weights"] == weights_label(by_g[g])]["unjudged@10"].mean()})
+                     "unjudged": unjudged[g]})
     out = pd.DataFrame(rows)
     out.to_csv(RESULTS_DIR / f"adaptive_pers_{split}.csv", index=False)
     print(f"{split}: {len(part)} queries ({len(limited)} with hard limits), {len(users)} returning shoppers:")

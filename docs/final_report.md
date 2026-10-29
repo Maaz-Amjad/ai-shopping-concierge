@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 238 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 240 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -308,15 +308,17 @@ catalog has no stock data, so no result above changes.
 
 Section 6.3 found that personalization costs some relevance when the shopper states what they want. The obvious fix
 is to give the shopper's history less weight when the request states a hard limit (price, category or brand),
-moving that share to the semantic term. The rule and the grid were fixed before any result: keep a share g of the
+moving that share to the semantic term. "States a limit" means the parser extracted one, as it would at run time,
+so parser mistakes count too (test q15, a descriptive query, counts as limited through an added category; dev q12, a
+category query, does not). The rule and the grid were fixed before any result: keep a share g of the
 personal weight, g from {1, 0.5, 0.25, 0}, chosen on dev by judged-only NDCG@10 over the 8 experiment-A shoppers,
 ties to the larger g.
 
 | g (share of w_pers kept with limits) | Dev: change vs g = 1 [95% CI] | Test: change vs g = 1 [95% CI] |
 |---|---|---|
 | 0.5 | −0.002 [−0.018, +0.013] | +0.009 [+0.0005, +0.021] |
-| 0.25 | −0.002 [−0.022, +0.017] | +0.016 [−0.002, +0.039] |
-| 0 | −0.005 [−0.029, +0.016] | +0.017 [−0.005, +0.045] |
+| 0.25 | −0.002 [−0.022, +0.016] | +0.016 [−0.002, +0.039] |
+| 0 | −0.005 [−0.029, +0.016] | +0.017 [−0.004, +0.045] |
 
 Dev chose **g = 1, i.e. no change**: on dev, personalization helped the queries with limits (+0.012 vs S5). Test,
 run once afterwards, points the other way: shrinking the personal weight would have recovered most of the
