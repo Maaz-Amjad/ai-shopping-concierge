@@ -161,3 +161,16 @@ def test_no_result_answer_says_when_matches_are_out_of_stock(tmp_path):
     res.catalog = res.catalog.assign(in_stock=[False, False, True])
     out = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"))
     assert out.ranked.empty and "2 matching products are out of stock" in out.answer.text
+
+
+def test_personal_weight_shrinks_only_for_returning_shoppers_with_stated_limits(tmp_path):
+    cfg = {**CFG, "ranking": {**CFG["ranking"], "pers_factor_with_limits": 0.0}}
+    res = resources(tmp_path, [gen(["A", "B"])] * 3)
+    res.cfg = cfg
+    limited = ParsedQuery(semantic_query="ice maker", category="Ice Makers")
+    warm = respond("ice maker", res, user_id="u_lg", parsed=limited).ranked.set_index("product_id")
+    assert warm.loc["B", "final"] == pytest.approx(0.95 * 0 + 0.05 * warm.loc["B", "s_pop"])   # personal share gone
+    open_query = ParsedQuery(semantic_query="ice maker")
+    free = respond("ice maker", res, user_id="u_lg", parsed=open_query).ranked.set_index("product_id")
+    assert free.loc["B", "final"] == pytest.approx(0.25 * free.loc["B", "s_pers"] + 0.7 * free.loc["B", "s_sem"]
+                                                   + 0.05 * free.loc["B", "s_pop"])     # no limits: base weights

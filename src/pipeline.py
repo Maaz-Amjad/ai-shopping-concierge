@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src import ROOT, load_config, set_seed
-from src.filters import available_mask, build_mask, relaxation_suggestions
+from src.filters import available_mask, build_mask, has_hard_limits, relaxation_suggestions
 from src.generate import (MAX_WORDS, GenerationResult, answer_text, generate_answer, no_result_answer,
                           template_answer, unpriced_section)
 from src.llm import CallLimitReached, LLMClient, provider_settings
@@ -105,7 +105,12 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
 
     t = time.perf_counter()
     user_vec = res.profiles.get(user_id) if user_id else None
-    ranked = rank(result.candidates, user_vec, Weights.from_config(cfg), catalog=res.catalog,
+    weights = Weights.from_config(cfg)
+    factor = cfg["ranking"].get("pers_factor_with_limits", 1.0)        # Phase 13.3; benchmark: no key -> 1
+    if user_vec is not None and factor != 1.0 and has_hard_limits(parsed):
+        weights = weights.with_limits(factor)
+        flags["personal_weight"] = weights.pers
+    ranked = rank(result.candidates, user_vec, weights, catalog=res.catalog,
                   embeddings=res.embeddings).head(n)
     timings["rank"] = (time.perf_counter() - t) * 1000
     flags.update(cold_start=user_vec is None, n_satisfying=result.n_satisfying,

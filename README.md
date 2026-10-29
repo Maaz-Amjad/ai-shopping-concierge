@@ -33,6 +33,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 12 Shopping chat agent (`src/agent.py`), website chat bubble, any LLM provider (`src/llm.py`) | done |
 | 13 Production improvements: star ratings in ranking (13.1) | done: test effect on relevance neutral, used by the app |
 | 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
+| 13.3 Smaller personal weight for requests with limits | done, kept off: dev chose no change, test disagreed (report 12.3) |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 

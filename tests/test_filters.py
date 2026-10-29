@@ -66,3 +66,11 @@ def test_out_of_stock_products_are_never_candidates_unknown_stock_is_kept():
                        "category": ["X", "X", "X"], "brand": ["B", "B", "B"], "in_stock": [True, False, None]})
     assert rows(build_mask(df, q())) == [0, 2]
     assert rows(unpriced_mask(df, q(max_price=5))) == [2]
+
+
+def test_has_hard_limits():
+    from src.filters import has_hard_limits
+
+    assert not has_hard_limits(q(exclude_terms=["steel"]))               # exclusions are not a stated limit here
+    assert all(has_hard_limits(q(**kw)) for kw in ({"max_price": 5}, {"min_price": 1}, {"category": "X"},
+                                                    {"brand": "GE"}))

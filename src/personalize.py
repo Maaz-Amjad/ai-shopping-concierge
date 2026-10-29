@@ -29,6 +29,11 @@ class Weights:
         r = cfg["ranking"]
         return cls(r["w_sem"], r["w_pers"], r["w_pop"], r.get("w_rat", 0.0))
 
+    def with_limits(self, factor: float) -> Weights:
+        """Phase 13.3: keep `factor` of the personal weight when the request states hard limits; the rest moves to
+        the semantic term (the shopper said what they want, so their history matters less)."""
+        return Weights(self.sem + self.pers * (1 - factor), self.pers * factor, self.pop, self.rat)
+
     def cold_start(self) -> Weights:
         """Spec 8.4: w_pers = 0, remaining weights renormalized to sum to 1."""
         total = self.sem + self.pop + self.rat

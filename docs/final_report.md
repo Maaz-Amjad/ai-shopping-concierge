@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 235 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 238 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -303,6 +303,27 @@ incremental update and a failed save. Two one-off manual checks (not saved as re
 store updated in about 3 seconds without loading the embedding model, and on a copy of the sample export with 20
 products marked sold out, none appeared in five searches or in the similar-product lists of 30 products. The benchmark
 catalog has no stock data, so no result above changes.
+
+### 12.3 Adaptive personalization (negative on dev, kept off)
+
+Section 6.3 found that personalization costs some relevance when the shopper states what they want. The obvious fix
+is to give the shopper's history less weight when the request states a hard limit (price, category or brand),
+moving that share to the semantic term. The rule and the grid were fixed before any result: keep a share g of the
+personal weight, g from {1, 0.5, 0.25, 0}, chosen on dev by judged-only NDCG@10 over the 8 experiment-A shoppers,
+ties to the larger g.
+
+| g (share of w_pers kept with limits) | Dev: change vs g = 1 [95% CI] | Test: change vs g = 1 [95% CI] |
+|---|---|---|
+| 0.5 | −0.002 [−0.018, +0.013] | +0.009 [+0.0005, +0.021] |
+| 0.25 | −0.002 [−0.022, +0.017] | +0.016 [−0.002, +0.039] |
+| 0 | −0.005 [−0.029, +0.016] | +0.017 [−0.005, +0.045] |
+
+Dev chose **g = 1, i.e. no change**: on dev, personalization helped the queries with limits (+0.012 vs S5). Test,
+run once afterwards, points the other way: shrinking the personal weight would have recovered most of the
+personalization loss on test (S6 vs S5 from −0.026 to −0.009 at g = 0). The two splits disagree, and dev holds only
+four judged queries with limits, so neither is decisive. Switching to g = 0.5 now would be choosing on test, so the
+feature ships switched off (`pers_factor_with_limits: 1.0` in `app.ranking`), ready to turn on once a larger dev set
+supports it. Reproduce with `python -m src.evaluate adaptive --split dev|test`.
 
 ## 13. Future work
 

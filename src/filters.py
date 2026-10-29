@@ -64,6 +64,11 @@ def build_mask(df: pd.DataFrame, pq: ParsedQuery, use_exclusions: bool = True) -
     return price_mask(df, pq) & non_price_mask(df, pq, use_exclusions)
 
 
+def has_hard_limits(pq: ParsedQuery) -> bool:
+    """The request states a price, category or brand limit (Phase 13.3: personal weight shrinks)."""
+    return has_price_filter(pq) or bool(pq.category) or bool(pq.brand)
+
+
 def has_price_filter(pq: ParsedQuery) -> bool:
     return pq.max_price is not None or pq.min_price is not None
 

@@ -28,4 +28,6 @@ app:
   allowed_origins: ["http://localhost:8000", "http://127.0.0.1:8000"]   # add each store's domain for the widget
   # production weights for the app, API and MCP server (Phase 13.1): rating term chosen on dev (w_rat 0.10);
   # test effect on relevance neutral. The benchmark and experiments keep the spec weights in `ranking` above.
-  ranking: {w_sem: 0.6, w_pers: 0.25, w_pop: 0.05, w_rat: 0.1}
+  # pers_factor_with_limits (Phase 13.3): share of w_pers kept when a request states price/category/brand limits.
+  # Dev chose 1.0 (off); test disagreed (0.5 would have helped), so it stays off until a larger dev set decides.
+  ranking: {w_sem: 0.6, w_pers: 0.25, w_pop: 0.05, w_rat: 0.1, pers_factor_with_limits: 1.0}

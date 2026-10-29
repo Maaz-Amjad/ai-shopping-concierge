@@ -176,3 +176,11 @@ def test_rank_tolerates_messy_rating_columns():
     assert len(rank(cands, None, w, catalog=no_count, embeddings=e)) == 3
     messy = catalog.assign(avg_rating=["4.5", "x", None, 4.0], rating_count=["10", "x", None, np.inf])
     assert len(rank(cands, None, w, catalog=messy, embeddings=e)) == 3
+
+
+# ---- Phase 13.3: adaptive personalization -------------------------------------------------------------
+
+def test_weights_with_limits_moves_part_of_the_personal_share_to_semantic():
+    w = Weights(0.6, 0.25, 0.05, 0.1).with_limits(0.25)
+    assert (w.sem, w.pers, w.pop, w.rat) == pytest.approx((0.7875, 0.0625, 0.05, 0.1))
+    assert Weights(0.7, 0.25, 0.05).with_limits(1.0) == Weights(0.7, 0.25, 0.05)

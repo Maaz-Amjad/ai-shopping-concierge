@@ -679,6 +679,51 @@ def run_rating(cfg: dict, split: str = "dev") -> pd.DataFrame:
     return out
 
 
+ADAPTIVE_GRID = (1.0, 0.5, 0.25, 0.0)   # Phase 13.3, pre-registered: share of w_pers kept when limits are stated
+
+
+def run_adaptive(cfg: dict, split: str = "dev") -> pd.DataFrame:
+    """Phase 13.3: shrink the personal weight to g * w_pers (rest to w_sem) for queries that state a hard limit.
+    Judged-only NDCG@10 change vs S5 over the 8 experiment-A users; each g is paired with g = 1 over queries."""
+    from src.data import load_interactions
+    from src.filters import has_hard_limits
+    from src.personalize import Weights, pick_users
+
+    queries = load_queries()
+    part = queries[queries["split"] == split]
+    parsed = load_parsed()
+    users = pick_users(load_interactions(), n=8, min_interactions=10, seed=cfg["seed"])
+    base = Weights.from_config(cfg)
+    by_g = {g: base.with_limits(g) for g in ADAPTIVE_GRID}
+    runs, shift = run_s6(part, parsed, cfg, users, weights_grid=[(w.sem, w.pers, w.pop) for w in by_g.values()],
+                         depth=CONDENSE_DEPTH)
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    a = experiment_a(runs, shift, qrels[qrels["query_id"].isin(part["query_id"])])
+    p_by_id = parsed.set_index("query_id")
+    limited = {q for q in part["query_id"] if has_hard_limits(to_parsed_query(p_by_id.loc[q]))}
+    base_label = weights_label(by_g[1.0])
+    col = "delta_NDCG@10_judged_only"
+    per_q = {}
+    for g, w in by_g.items():
+        label = weights_label(w)
+        pick = a[((a["query_id"].isin(limited)) & (a["weights"] == label)) |
+                 (~a["query_id"].isin(limited) & (a["weights"] == base_label))]
+        per_q[g] = pick.groupby("query_id")[col].mean()
+    rows = []
+    for g in ADAPTIVE_GRID:
+        lim = per_q[g][per_q[g].index.isin(limited)]
+        mean, lo, hi = paired_bootstrap(per_q[1.0].tolist(), per_q[g].reindex(per_q[1.0].index).tolist())
+        rows.append({"g": g, "w_pers_with_limits": round(by_g[g].pers, 4), "queries": len(per_q[g]),
+                     "limited_queries": len(lim), "delta_ndcg_judged_only": per_q[g].mean(),
+                     "delta_ndcg_judged_only_limited": lim.mean(), "vs_g1": mean, "vs_g1_lo": lo, "vs_g1_hi": hi,
+                     "unjudged": a[a["weights"] == weights_label(by_g[g])]["unjudged@10"].mean()})
+    out = pd.DataFrame(rows)
+    out.to_csv(RESULTS_DIR / f"adaptive_pers_{split}.csv", index=False)
+    print(f"{split}: {len(part)} queries ({len(limited)} with hard limits), {len(users)} returning shoppers:")
+    print(out.round(4).to_string(index=False))
+    return out
+
+
 def run_qrels() -> None:
     """Agreement on the verified sample, then eval/qrels.csv (human grade wins).
 
@@ -910,7 +955,7 @@ def run_report(cfg: dict, split: str = "test") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "report"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -936,6 +981,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "rating":
         run_rating(cfg, args.split)
+        return
+    if args.action == "adaptive":
+        run_adaptive(cfg, args.split)
         return
     if args.action == "prefix":
         run_prefix(cfg)
