@@ -143,11 +143,13 @@ def validate_answer(answer: Answer, items: pd.DataFrame, stated_prices: set[floa
     seen: set[str] = set()
     for brand in catalog_brands:
         key = brand.casefold()
-        if key in seen:                  # one check per brand, whatever its catalog spelling variants
+        if key in seen or len(brand) < 2:   # one check per brand; a one-letter brand ("I") is just a word
             continue
         seen.add(key)
         pattern = rf"(?<![\w]){re.escape(brand)}(?![\w])"
-        mentioned = any(m.group(0)[0].isupper() or m.group(0) == brand
+        # capitalised mention, or the exact catalog spelling when it is distinctive (mDesign, 77L); an all-lowercase
+        # brand ("part") written in lowercase is indistinguishable from the ordinary word
+        mentioned = any(m.group(0)[0].isupper() or (m.group(0) == brand and not brand.islower())
                         for m in re.finditer(pattern, text, flags=re.IGNORECASE))
         if mentioned and not re.search(pattern, grounded, flags=re.IGNORECASE):
             errors.append(f"brand {brand} is not in the product data")

@@ -20,7 +20,7 @@ from src.llm import CallLimitReached, QuotaExhausted
 from src.parse import ParsedQuery, validate
 from src.pipeline import Resources, get_similar, records, respond, result_to_dict, search_products
 
-PROMPT_VERSION = "agent-v1"
+PROMPT_VERSION = "agent-v2"     # v2: limits merged in Python (v1 let the LLM restate them)
 MAX_HISTORY = 6          # turns kept in the prompt
 MAX_TEXT = 500           # characters per message kept in state
 MAX_SHORTLIST = 20
@@ -30,7 +30,7 @@ FALLBACK_ASK = "Could you tell me a bit more about what you're looking for, for 
 _ITEMS = {"type": "array", "items": {"type": "integer"}, "description": "Product numbers as shown to the shopper"}
 TOOLS: list[dict] = [
     {"name": "search", "description": "Find products, or change the current results (narrow, widen, cheaper, other "
-     "brand). Give the complete set of limits that should apply now.",
+     "brand). Give only limits stated or changed in this message; earlier limits are kept automatically.",
      "parameters": {"type": "object", "properties": {
          "request": {"type": "string", "description": "What to look for, in words (product type and wishes), "
                      "combining the conversation so far"},
@@ -38,6 +38,10 @@ TOOLS: list[dict] = [
          "category": {"type": "string", "description": "Only a value from the valid categories"},
          "brand": {"type": "string", "description": "Only a brand the shopper named"},
          "exclude_terms": {"type": "array", "items": {"type": "string"}, "description": "Things the shopper does not want"},
+         "remove_limits": {"type": "array", "items": {"type": "string", "enum": list(LIMIT_FIELDS)},
+                           "description": "Earlier limits the shopper no longer wants"},
+         "new_search": {"type": "boolean", "description": "True when the shopper asks for a different kind of "
+                        "product, so earlier limits no longer apply"},
      }, "required": ["request"]}},
     {"name": "compare", "description": "Compare two or more shown products side by side.",
      "parameters": {"type": "object", "properties": {"items": _ITEMS}, "required": ["items"]}},
@@ -139,8 +143,9 @@ def build_prompt(message: str, state: ChatState, res: Resources) -> str:
         "latest message.\n"
         "Rules:\n"
         "- To find products or change the results (cheaper, another brand, without something, a different budget), "
-        "call search with the COMPLETE set of limits that should apply now: keep earlier limits that still apply, "
-        "drop or change the ones the shopper changed. Only set limits the shopper stated or clearly implied.\n"
+        "call search. Give only the limits stated or changed in this message: earlier limits are kept automatically. "
+        "Put limits the shopper drops in remove_limits, and set new_search when they ask for a different kind of "
+        "product. Only set limits the shopper stated or clearly implied.\n"
         "- 'cheaper' means a max_price below the prices currently shown. Prices are in dollars.\n"
         "- category must be one of the valid categories, brand one the shopper named; otherwise leave them out.\n"
         "- Products are referred to by their numbers in the list currently shown (or in the shortlist for "
@@ -181,8 +186,7 @@ def _bad_numbers(bad: list[int], size: int, what: str = "the list") -> str:
 def do_search(args: dict, message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
               link: str | None) -> TurnResult:
     request = str(args.get("request") or message).strip()[:MAX_TEXT]
-    raw = ParsedQuery(semantic_query=request, exclude_terms=[str(t) for t in args.get("exclude_terms") or []],
-                      **{k: args.get(k) for k in ("max_price", "min_price", "category", "brand")})
+    raw = ParsedQuery(semantic_query=request, **merge_limits(args, state))
     parsed, log = validate(raw, request, res.meta)
     out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True)
     view = result_to_dict(request, out, res)
@@ -193,6 +197,20 @@ def do_search(args: dict, message: str, state: ChatState, res: Resources, user_i
     return TurnResult("search", out.answer.text, state, cards(ids, res, link, extra),
                       flags={"parse_log": log, "limits": parsed.model_dump(), **{k: view["flags"].get(k) for k in
                              ("cold_start", "price_excluded", "generation_fallback")}})
+
+
+def merge_limits(args: dict, state: ChatState) -> dict:
+    """Limits for this turn: earlier ones carry over (Python, not the LLM) unless the shopper removed them or started a
+    new search; new values replace old ones; "not X" terms accumulate."""
+    prev = Limits() if args.get("new_search") or state.limits is None else state.limits
+    removed = {str(f) for f in args.get("remove_limits") or []}
+    merged: dict[str, Any] = {}
+    for f in ("max_price", "min_price", "category", "brand"):
+        merged[f] = args[f] if args.get(f) is not None else (None if f in removed else getattr(prev, f))
+    new_terms = [str(t) for t in args.get("exclude_terms") or []]
+    kept = [] if "exclude_terms" in removed else prev.exclude_terms
+    merged["exclude_terms"] = list(dict.fromkeys(kept + new_terms))
+    return merged
 
 
 def do_compare(args: dict, state: ChatState, res: Resources, link: str | None) -> TurnResult:
@@ -384,11 +402,14 @@ def main(argv: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(description="Phase 12: run the scripted chat conversations.")
     parser.add_argument("--limit", type=int, default=None, help="max real LLM calls (cache hits are free)")
+    parser.add_argument("--set", choices=["main", "heldout"], default="main",
+                        help="heldout = conversations written before the v2 fix, never used to change the agent")
     args = parser.parse_args(argv)
     res = load_resources(max_calls=args.limit)
-    conversations = json.loads((ROOT / "eval" / "conversations.json").read_text(encoding="utf-8"))
+    suffix = "" if args.set == "main" else "_heldout"
+    conversations = json.loads((ROOT / "eval" / f"conversations{suffix}.json").read_text(encoding="utf-8"))
     df = evaluate_conversations(res, conversations)
-    df.to_csv(ROOT / "eval" / "results" / "agent_eval.csv", index=False)
+    df.to_csv(ROOT / "eval" / "results" / f"agent_eval{suffix}.csv", index=False)
     checks = {c: df[c].dropna() for c in ("action_ok", "gold_ok", "cheaper_ok", "no_price_limit_ok", "no_brand_ok",
                                           "grounded")}
     print(f"{len(df)} turns in {df.conversation.nunique()} conversations | API calls this run: "
