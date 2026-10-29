@@ -469,3 +469,100 @@ def test_webhooks_work_for_a_store_imported_from_a_shopify_csv(tmp_path, monkeyp
     cat = pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl").set_index("product_id")
     assert cat.loc["steel-kettle", "price"] == 30.0 and cat.loc["steel-kettle", "in_stock"] is False
     assert len(cat) == 3                                             # same product id (the handle), not a new one
+
+
+
+# ---- verifier findings, Phase 13.4 ----------------------------------------------------------------------
+
+def csv_store(tmp_path, monkeypatch, site="shop.com"):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    feed = read_feed(write(tmp_path, "s.csv", SHOPIFY_CSV))
+    store.build_store_from_feed("csv", feed, "shopify", model=FakeModel(), cfg=cfg, source="upload", site=site)
+    return cfg
+
+
+def test_shopify_delete_by_id_on_a_csv_store_checks_the_live_store(tmp_path, monkeypatch):
+    cfg = csv_store(tmp_path, monkeypatch)
+    live = {"products": [{"id": 1, "handle": "steel-kettle", "title": "Steel Kettle"},
+                         {"id": 3, "handle": "toaster-2", "title": "2-Slice Toaster"}]}     # glass-kettle deleted
+    monkeypatch.setattr(store, "fetch_products_json", lambda url: live)
+    log = store.apply_store_changes("csv", delete_ids=["2"], model=FakeModel(), cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl")
+    assert sorted(cat["product_id"]) == ["steel-kettle", "toaster-2"] and log["removed"] == 1
+    assert dict(zip(cat["product_id"], cat["source_id"])) == {"steel-kettle": "1", "toaster-2": "3"}
+
+
+def test_shopify_delete_of_an_unknown_id_without_a_store_address_reports_not_found(tmp_path, monkeypatch):
+    cfg = csv_store(tmp_path, monkeypatch, site=None)
+    log = store.apply_store_changes("csv", delete_ids=["999"], model=FakeModel(), cfg=cfg)
+    assert log["not_found"] == ["999"] and len(pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl")) == 3
+
+
+def test_renamed_handle_replaces_the_old_row(tmp_path, monkeypatch):
+    cfg = webhook_store(tmp_path, monkeypatch)
+    store.apply_store_changes("shop", store.shopify_webhook_feed(SHOP_PRODUCT), preset="shopify_json",
+                              model=FakeModel(), cfg=cfg)                   # learns source id 101
+    store.apply_store_changes("shop", store.shopify_webhook_feed({**SHOP_PRODUCT, "handle": "kettle-renamed"}),
+                              preset="shopify_json", model=FakeModel(), cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl")
+    assert sorted(cat["product_id"]) == ["glass-kettle", "kettle-renamed"]
+
+
+def test_webhook_keeps_brand_category_and_ratings_it_does_not_carry(tmp_path, monkeypatch):
+    cfg = csv_store(tmp_path, monkeypatch)                                  # category from "Product Category"
+    store.apply_store_changes("csv", store.shopify_webhook_feed({**SHOP_PRODUCT, "product_type": "Misc"}),
+                              preset="shopify_json", model=FakeModel(), cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl").set_index("product_id")
+    assert cat.loc["steel-kettle", "category"] == "Kettles"                   # field sources differ: kept
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "w")
+    woo = pd.DataFrame({"product_id": ["K-7"], "title": ["Kettle"], "brand": ["MugCo"], "rating": [4.5],
+                        "rating_count": [10]})
+    store.build_store_from_feed("woo", woo, "generic", model=FakeModel(), cfg=cfg, source="upload")
+    payload = {"id": 7, "sku": "K-7", "name": "Kettle", "status": "publish", "regular_price": "20",
+               "stock_status": "instock"}
+    store.apply_store_changes("woo", store.woocommerce_webhook_feed(payload), preset="woocommerce",
+                              model=FakeModel(), cfg=cfg)
+    row = pd.read_pickle(tmp_path / "w" / "woo" / "catalog.pkl").set_index("product_id").loc["K-7"]
+    assert row["brand"] == "MugCo" and row["avg_rating"] == 4.5 and row["price"] == 20.0
+    branded = store.woocommerce_webhook_feed({**payload, "brands": [{"name": "Brewly"}], "average_rating": "4.0",
+                                              "rating_count": 3})
+    cat, _ = import_feed(branded, "woocommerce")
+    assert cat[["brand", "avg_rating", "rating_count"]].values.tolist() == [["Brewly", 4.0, 3]]
+
+
+def test_saved_mapping_is_not_applied_to_webhook_payloads(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    woo = read_feed(write(tmp_path, "w.csv", WOO_CSV)).rename(columns={"Name": "Product name"})
+    store.build_store_from_feed("woo", woo, "woocommerce", {"title": "Product name"}, model=FakeModel(), cfg=cfg)
+    payload = {"id": 11, "sku": "K-1", "name": "Travel Kettle 2", "status": "publish", "regular_price": "26"}
+    store.apply_store_changes("woo", store.woocommerce_webhook_feed(payload), preset="woocommerce",
+                              model=FakeModel(), cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "woo" / "catalog.pkl").set_index("product_id")
+    assert cat.loc["K-1", "title"] == "Travel Kettle 2"
+
+
+def test_shopify_webhook_tags_unknown_inventory_and_unpublished_storefront():
+    feed = store.shopify_webhook_feed({**SHOP_PRODUCT, "variants": [{"price": "39.00"}]})
+    assert feed["tags"].iloc[0] == "steel; cordless" and feed["available"].iloc[0] is None
+    hidden = store.shopify_webhook_feed({**SHOP_PRODUCT, "published_at": None})
+    assert import_feed(hidden, "shopify_json")[0].empty
+
+
+def test_store_lock_is_shared_between_processes_and_temp_files_are_private(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    (tmp_path / "stores" / "x").mkdir(parents=True)
+    with store.store_lock("x"):
+        assert (tmp_path / "stores" / "x" / ".lock").exists()
+        with pytest.raises(TimeoutError):
+            with store.store_lock("x", timeout=0.2):
+                pass
+    assert not (tmp_path / "stores" / "x" / ".lock").exists()
+
+
+def test_read_secrets_never_creates_them(tmp_path, monkeypatch):
+    webhook_store(tmp_path, monkeypatch)
+    assert store.read_secrets("shop") is None and store.read_secrets("missing") is None
+    created = store.store_secrets("shop")
+    assert store.read_secrets("shop") == created

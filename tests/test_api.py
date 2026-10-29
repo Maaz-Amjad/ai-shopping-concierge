@@ -207,3 +207,85 @@ def test_rate_limit_api_key_and_request_log(tmp_path, monkeypatch):
 def test_widget_sends_the_store_api_key_when_given(client):
     js = client.get("/widget.js").text
     assert 'getAttribute("data-key")' in js and 'headers["X-API-Key"]' in js and js.count("headers: headers") == 2
+
+
+
+# ---- verifier findings, Phase 13.4 ----------------------------------------------------------------------
+
+def test_rate_limiter_forgets_idle_clients():
+    from app.api import RateLimiter
+
+    lim = RateLimiter()
+    for i in range(50):
+        lim.wait((f"ip{i}", "llm"), 5, now=0.0)
+    lim.wait(("late", "llm"), 5, now=200.0)
+    assert set(lim.hits) == {("late", "llm")}
+
+
+def test_forwarded_for_uses_the_address_added_by_the_trusted_proxy(tmp_path, monkeypatch):
+    from app import api
+
+    monkeypatch.setattr(api, "load_config", lambda: {"app": {"trust_proxy": True}})
+    res = resources(tmp_path, [])
+    client = TestClient(create_app(lambda s: res, rate_limits={"other": 2}))
+    codes = [client.get("/meta", headers={"X-Forwarded-For": f"10.0.0.{i}, 203.0.113.9"}).status_code
+             for i in range(3)]
+    assert codes == [200, 200, 429]                                    # spoofed first entries do not help
+
+
+def test_api_key_is_checked_before_loading_and_hides_which_stores_exist(tmp_path, monkeypatch):
+    from src import store
+
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    loads = []
+    client = TestClient(create_app(lambda s: loads.append(s), require_api_key=True))
+    assert client.get("/meta", params={"store": "nope"}).status_code == 401
+    assert loads == [] and not (tmp_path / "stores").exists()
+
+
+def test_store_api_key_path(tmp_path, monkeypatch):
+    from src import store
+    from test_store import webhook_store
+
+    webhook_store(tmp_path, monkeypatch)
+    key = store.store_secrets("shop")["api_key"]
+    res = resources(tmp_path, [])
+    client = TestClient(create_app(lambda s: res, require_api_key=True))
+    assert client.get("/meta", params={"store": "shop"}).status_code == 401
+    assert client.get("/meta", params={"store": "shop"}, headers={"X-API-Key": key}).status_code == 200
+
+
+def test_webhook_limits_body_size_and_hides_unknown_stores(shop_app):
+    client, secret, calls, product, _ = shop_app
+    big = b"{" + b" " * (3 * 1024 * 1024) + b"}"
+    assert client.post("/webhooks/shop/shopify", content=big,
+                       headers={"X-Shopify-Hmac-Sha256": "x", "X-Shopify-Topic": "products/update"}).status_code == 413
+    body, sig = signed(secret, product)
+    assert client.post("/webhooks/nope/shopify", content=body,
+                       headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update"}).status_code == 401
+
+
+def test_woocommerce_variation_deliveries_are_ignored(shop_app):
+    client, secret, calls, _, _ = shop_app
+    body, sig = signed(secret, {"id": 9, "type": "variation", "parent_id": 7, "status": "publish"})
+    r = client.post("/webhooks/shop/woocommerce", content=body,
+                    headers={"X-WC-Webhook-Signature": sig, "X-WC-Webhook-Topic": "product.updated"})
+    assert r.json()["status"] == "ignored" and calls == []
+
+
+def test_reloaded_store_replaces_the_old_copy_and_keeps_the_llm_budget(tmp_path, monkeypatch):
+    from app import api
+
+    versions = iter([1.0, 2.0])                                         # the store changed between calls
+    monkeypatch.setattr(api, "store_version", lambda store: next(versions))
+    made = []
+
+    def loader(store):
+        res = resources(tmp_path / str(len(made)), [])
+        made.append(res)
+        return res
+
+    client = TestClient(create_app(loader))
+    client.get("/meta")
+    client.get("/meta")
+    assert len(made) == 2 and made[1].client is made[0].client          # one LLM budget per process
