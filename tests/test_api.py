@@ -321,3 +321,57 @@ def test_search_and_chat_stream_products_first_then_the_answer(tmp_path):
 def test_widget_reads_the_streams(client):
     js = client.get("/widget.js").text
     assert "/chat/stream" in js and "/search/stream" in js and "getReader" in js
+
+
+# ---- verifier findings, Phase 13.6 ----------------------------------------------------------------------
+
+def test_stream_sends_products_once_when_the_call_cap_hits_during_generation(tmp_path):
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    res = resources(tmp_path, [parsed, gen(["A", "B"])])
+    res.client.max_calls = 1                                          # parse allowed, generation refused
+    client = TestClient(create_app(lambda s: res))
+    lines = [json.loads(x) for x in client.post("/search/stream", json={"query": "ice maker"}).text.splitlines()]
+    assert [e["type"] for e in lines] == ["products", "answer"]
+    assert [p["product_id"] for p in lines[1]["products"]] == ["A", "B"]          # category limit kept
+    assert lines[1]["parsed"]["category"] == "Ice Makers"
+
+
+def test_stream_no_result_has_no_products_event_and_errors_are_generic(tmp_path, monkeypatch):
+    from app import api
+
+    parsed = json.dumps({"semantic_query": "toaster", "category": "Ice Makers", "max_price": 1})
+    res = resources(tmp_path, [parsed])
+    client = TestClient(create_app(lambda s: res))
+    lines = [json.loads(x) for x in client.post("/search/stream", json={"query": "toaster"}).text.splitlines()]
+    assert [e["type"] for e in lines] == ["answer"]
+    monkeypatch.setattr(api, "search_products", lambda *a, **k: (_ for _ in ()).throw(KeyError("C:/secret/path")))
+    err = [json.loads(x) for x in client.post("/search/stream", json={"query": "x"}).text.splitlines()]
+    assert err == [{"type": "error", "detail": "something went wrong; please try again"}]
+    assert client.post("/chat/stream", json={"message": "hi", "state": {"shown": "not a list"}}).status_code == 400
+
+
+def test_stream_routes_are_logged_when_the_stream_ends(tmp_path, monkeypatch):
+    import time as _time
+
+    from app import api
+
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    res = resources(tmp_path, [parsed, gen(["A", "B"])])
+    real = api.search_products
+
+    def slow(*a, **k):
+        _time.sleep(0.3)
+        return real(*a, **k)
+
+    monkeypatch.setattr(api, "search_products", slow)
+    client = TestClient(create_app(lambda s: res, request_log=tmp_path / "log.jsonl"))
+    client.post("/search/stream", json={"query": "ice maker"})
+    line = json.loads((tmp_path / "log.jsonl").read_text().splitlines()[-1])
+    assert line["path"] == "/search/stream" and line["ms"] >= 300
+
+
+def test_widget_stream_cleanup_final_event_and_fallback(client):
+    js = client.get("/widget.js").text
+    assert "early.remove()" in js.split(".catch(")[1]                  # early cards removed on errors too
+    assert 'last.type !== "answer" && last.type !== "turn"' in js     # a cut stream is an error
+    assert "ReadableStream" in js                                     # plain endpoint when streams are missing
