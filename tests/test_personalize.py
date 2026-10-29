@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.personalize import (Weights, build_profiles, holdout_split, item_rank, minmax, next_item_eval,
-                             popularity_score, rank, summarize_next_item, user_vector)
+                             popularity_score, rank, rating_score, summarize_next_item, user_vector)
 
 
 def toy_catalog() -> tuple[pd.DataFrame, np.ndarray]:
@@ -122,3 +122,34 @@ def test_next_item_popularity_counts_only_history_not_held_out_items():
     r = per_user[per_user.user_id == "u"].set_index("method")["rank"]
     # History counts: A 1, C 1, B 0, D 0. u saw A; unseen B, C, D -> C first, then B before D on product_id.
     assert r["popularity"] == 2
+
+
+# ---- Phase 13.1: ratings as a fourth ranking term -------------------------------------------------------
+
+def test_rating_score_is_a_bayesian_average_and_missing_is_neutral():
+    out = rating_score(np.array([5.0, 4.5, np.nan]), np.array([1, 1000, 0]), mean=4.0, prior=20)
+    assert out.tolist() == pytest.approx([(80 + 5) / 21, (80 + 4500) / 1020, 4.0])   # 1 rating barely moves it
+
+
+def test_weights_with_rating_from_config_and_cold_start():
+    w = Weights.from_config({"ranking": {"w_sem": 0.6, "w_pers": 0.25, "w_pop": 0.05, "w_rat": 0.1}})
+    assert w == Weights(0.6, 0.25, 0.05, 0.1)
+    assert Weights.from_config({"ranking": {"w_sem": 0.7, "w_pers": 0.25, "w_pop": 0.05}}).rat == 0.0
+    cold = w.cold_start()
+    assert cold.pers == 0 and cold.sem + cold.pop + cold.rat == pytest.approx(1.0)
+    assert cold.rat == pytest.approx(0.1 / 0.75)
+
+
+def test_rank_rating_term_hand_computed_and_zero_weight_changes_nothing():
+    catalog, e = toy_catalog()
+    catalog = catalog.assign(avg_rating=[5.0, 3.0, 4.0, np.nan], rating_count=[100, 100, 1, 0])
+    cands = pd.DataFrame({"row": [0, 1, 3], "score": [0.5, 0.9, 0.7]})       # s_sem A 0, B 1, D 0.5
+    # catalog mean 4.0; Bayesian A 4.83, B 3.17, D 4.0 (no ratings) -> s_rat A 1, B 0, D 0.5
+    out = rank(cands, None, Weights(0.4, 0.0, 0.0, 0.6), catalog=catalog, embeddings=e).set_index("product_id")
+    assert out["s_rat"].to_dict() == pytest.approx({"A": 1.0, "B": 0.0, "D": 0.5})
+    assert out["rank"].to_dict() == {"A": 1, "D": 2, "B": 3}
+    plain = rank(cands, None, Weights(0.7, 0.25, 0.05), catalog=catalog, embeddings=e)
+    no_ratings = rank(cands, None, Weights(0.7, 0.25, 0.05), catalog=catalog.drop(columns=["avg_rating",
+                                                                                         "rating_count"]),
+                      embeddings=e)
+    assert plain["final"].tolist() == no_ratings["final"].tolist() and (no_ratings["s_rat"] == 0).all()

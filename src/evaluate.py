@@ -316,13 +316,14 @@ def adherence_table(runs: pd.DataFrame, queries: pd.DataFrame, catalog: pd.DataF
 
 
 def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequence[str],
-           weights_grid: Sequence[tuple[float, float, float]] | None = None,
+           weights_grid: Sequence[tuple[float, ...]] | None = None,
            depth: int = 10) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Re-rank each query's S5 pool for each user (and each weight setting).
 
     Returns (runs: S5 and S6 top-`depth`, system label "S6|user|w_sem,w_pers,w_pop" for S6;
     shift: one row per (user, weights, query) with Kendall tau between the S5 and S6 order of the
     whole pool and the top-10 overlap). Use depth > 10 when judged-only (condensed) metrics are needed.
+    A user "" is a new shopper (cold start); a 4th weight is the rating term (label gains ",w_rat").
     """
     from scipy.stats import kendalltau
 
@@ -355,9 +356,9 @@ def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequen
             continue
         s5_rank = dict(zip(pool["row"], pool["rank"]))
         for w in grid:
-            label = f"{w.sem:g},{w.pers:g},{w.pop:g}"
+            label = weights_label(w)
             for user in users:
-                ranked = rank(pool, profiles[user], w, catalog=catalog, embeddings=embeddings)
+                ranked = rank(pool, profiles[user] if user else None, w, catalog=catalog, embeddings=embeddings)
                 for c in ranked.head(depth).itertuples(index=False):
                     run_rows.append({"query_id": qid, "system": f"S6|{user}|{label}", "user_id": user,
                                      "rank": int(c.rank), "product_id": c.product_id, "score": float(c.final)})
@@ -367,6 +368,11 @@ def run_s6(queries: pd.DataFrame, parsed: pd.DataFrame, cfg: dict, users: Sequen
                 shift_rows.append({"query_id": qid, "user_id": user, "weights": label, "kendall_tau": tau,
                                    "overlap@10": len(top_s5 & set(ranked.head(10)["row"])) / min(10, len(pool))})
     return pd.DataFrame(run_rows), pd.DataFrame(shift_rows)
+
+
+def weights_label(w) -> str:
+    """'w_sem,w_pers,w_pop' as in earlier result files, plus ',w_rat' when the rating term is on."""
+    return f"{w.sem:g},{w.pers:g},{w.pop:g}" + (f",{w.rat:g}" if w.rat else "")
 
 
 CONDENSE_DEPTH = 50  # runs scored judged-only are this deep, so judged items below rank 10 can move up
@@ -637,6 +643,42 @@ def run_sensitivity(cfg: dict) -> pd.DataFrame:
     return out
 
 
+RATING_GRID = (0.0, 0.05, 0.1, 0.15, 0.2)   # Phase 13.1, pre-registered; taken out of w_sem
+
+
+def run_rating(cfg: dict, split: str = "dev") -> pd.DataFrame:
+    """Phase 13.1: the rating weight over RATING_GRID for new shoppers (cold start) and the 8 experiment-A users,
+    judged-only NDCG@10 change vs S5 (same baseline for every weight). Choose on dev; report test once."""
+    from src.data import load_interactions
+    from src.personalize import pick_users
+
+    queries = load_queries()
+    part = queries[queries["split"] == split]
+    users = [""] + pick_users(load_interactions(), n=8, min_interactions=10, seed=cfg["seed"])
+    r = cfg["ranking"]
+    grid = [(round(r["w_sem"] - wr, 2), r["w_pers"], r["w_pop"], wr) for wr in RATING_GRID]
+    runs, shift = run_s6(part, load_parsed(), cfg, users, weights_grid=grid, depth=CONDENSE_DEPTH)
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    a = experiment_a(runs, shift, qrels[qrels["query_id"].isin(part["query_id"])])
+    a["shopper"] = np.where(a["user_id"] == "", "new", "returning")
+    a["w_rat"] = [float(lbl.split(",")[3]) if lbl.count(",") == 3 else 0.0 for lbl in a["weights"]]
+    out = a.groupby(["shopper", "w_rat"]).agg(
+        delta_ndcg_judged_only=("delta_NDCG@10_judged_only", "mean"), delta_ndcg=("delta_NDCG@10", "mean"),
+        unjudged=("unjudged@10", "mean"), overlap_vs_s5=("overlap@10", "mean"), rows=("query_id", "size")).reset_index()
+    # paired over queries (returning: mean over users first): each weight minus w_rat 0, judged-only NDCG@10
+    per_q = a.groupby(["shopper", "w_rat", "query_id"])["delta_NDCG@10_judged_only"].mean()
+    diffs = []
+    for shopper, w in zip(out["shopper"], out["w_rat"]):
+        base, cur = per_q.loc[(shopper, 0.0)], per_q.loc[(shopper, w)]
+        mean, lo, hi = paired_bootstrap(base.tolist(), cur.reindex(base.index).tolist())
+        diffs.append((mean, lo, hi))
+    out[["vs_w0", "vs_w0_lo", "vs_w0_hi"]] = diffs
+    out.to_csv(RESULTS_DIR / f"rating_weight_{split}.csv", index=False)
+    print(f"{split} queries {len(part)}, new shopper + {len(users) - 1} returning; mean over (shopper, query):")
+    print(out.round(4).to_string(index=False))
+    return out
+
+
 def run_qrels() -> None:
     """Agreement on the verified sample, then eval/qrels.csv (human grade wins).
 
@@ -868,7 +910,7 @@ def run_report(cfg: dict, split: str = "test") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "report"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -891,6 +933,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "sensitivity":
         run_sensitivity(cfg)
+        return
+    if args.action == "rating":
+        run_rating(cfg, args.split)
         return
     if args.action == "prefix":
         run_prefix(cfg)

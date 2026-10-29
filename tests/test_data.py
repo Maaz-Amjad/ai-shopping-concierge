@@ -52,13 +52,16 @@ def test_extract_category_uses_deepest_level_up_to_three():
 def test_load_raw_meta_maps_fields(tmp_path):
     rec = {"parent_asin": "P1", "title": " Ice <i>Maker</i> ", "store": "ROVSUN", "price": "$99.50",
            "categories": ["Appliances", "Refrigerators", "Ice Makers"],
-           "description": ["Makes ice."], "features": ["Quiet", " Portable "]}
+           "description": ["Makes ice."], "features": ["Quiet", " Portable "], "average_rating": 4.4,
+           "rating_number": 120}
     path = tmp_path / "meta.jsonl"
     path.write_text(json.dumps(rec) + "\n" + json.dumps({"parent_asin": "P2", "store": "", "price": None}) + "\n")
     df = load_raw_meta(path)
     assert df.loc[0, ["product_id", "title", "brand", "category", "price", "features"]].tolist() == \
         ["P1", "Ice Maker", "ROVSUN", "Ice Makers", 99.5, "Quiet; Portable"]
     assert pd.isna(df.loc[1, "brand"]) and pd.isna(df.loc[1, "price"]) and not df.loc[1, "price_raw_present"]
+    assert df.loc[0, ["avg_rating", "rating_count"]].tolist() == [4.4, 120]                 # Phase 13.1
+    assert pd.isna(df.loc[1, "avg_rating"]) and df.loc[1, "rating_count"] == 0
 
 
 def make_catalog_inputs():

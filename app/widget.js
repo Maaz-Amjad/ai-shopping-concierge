@@ -46,6 +46,10 @@
   }
 
   function price(p) { return p === null || p === undefined ? "price not listed" : "$" + Number(p).toFixed(2); }
+  function stars(p) {
+    return p.avg_rating === null || p.avg_rating === undefined ? "" :
+      "\u2605 " + Number(p.avg_rating).toFixed(1) + " (" + Number(p.rating_count || 0).toLocaleString() + " ratings)";
+  }
 
   // ---------------- chat bubble (default; data-mode="search" keeps the plain search box) ----------------
   if ((script.getAttribute("data-mode") || "chat") === "chat") {
@@ -110,7 +114,7 @@
       (data.products || []).forEach(function (p) {
         var c = el("div", "cw-pcard");
         c.appendChild(el("div", "cw-t", p.number + ". " + p.title));
-        c.appendChild(el("div", "cw-meta", [p.brand || "", price(p.price)].filter(Boolean).join(" · ")));
+        c.appendChild(el("div", "cw-meta", [p.brand || "", price(p.price), stars(p)].filter(Boolean).join(" · ")));
         if (p.reason) c.appendChild(el("div", null, p.reason));
         var acts = el("div", "cw-acts");
         [["Save", "save"], ["Similar", "similar"], ["Buy", "buy"]].forEach(function (a) {
@@ -217,10 +221,12 @@
     (data.products || []).forEach(function (p) {
       var card = el("div", "cw-card");
       card.appendChild(el("div", "cw-title", p.title));
-      card.appendChild(el("div", "cw-meta", [p.brand || "", p.category || "", price(p.price)].filter(Boolean).join(" · ")));
+      card.appendChild(el("div", "cw-meta", [p.brand || "", p.category || "", price(p.price), stars(p)]
+        .filter(Boolean).join(" · ")));
       if (p.reason) card.appendChild(el("div", null, p.reason));
       card.appendChild(el("div", "cw-why", "why: relevance " + (p.s_sem || 0).toFixed(2) + ", personal " +
-        (p.s_pers || 0).toFixed(2) + ", popularity " + (p.s_pop || 0).toFixed(2)));
+        (p.s_pers || 0).toFixed(2) + ", popularity " + (p.s_pop || 0).toFixed(2) +
+        (p.avg_rating == null ? "" : ", rating " + (p.s_rat || 0).toFixed(2))));
       out.appendChild(card);
     });
   }

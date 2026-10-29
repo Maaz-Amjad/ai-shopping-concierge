@@ -70,6 +70,8 @@ def load_raw_meta(path: Path) -> pd.DataFrame:
                 "price_raw_present": d.get("price") not in (None, "", "None"),
                 "description": clean_text(" ".join(d.get("description") or [])),
                 "features": "; ".join(t for t in map(clean_text, d.get("features") or []) if t),
+                "avg_rating": d.get("average_rating"),          # Phase 13.1: rating signal (not embedded)
+                "rating_count": d.get("rating_number") or 0,
             })
     return pd.DataFrame(rows)
 

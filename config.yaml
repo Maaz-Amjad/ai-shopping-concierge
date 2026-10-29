@@ -26,3 +26,6 @@ eval: {k: [5, 10], pool_depth: 10, bootstrap_resamples: 1000}
 app:
   max_llm_calls: 300                  # per server process (Flash-Lite free tier: 500 RPD); then template answers
   allowed_origins: ["http://localhost:8000", "http://127.0.0.1:8000"]   # add each store's domain for the widget
+  # production weights for the app, API and MCP server (Phase 13.1): rating term chosen on dev (w_rat 0.10);
+  # test effect on relevance neutral. The benchmark and experiments keep the spec weights in `ranking` above.
+  ranking: {w_sem: 0.6, w_pers: 0.25, w_pop: 0.05, w_rat: 0.1}

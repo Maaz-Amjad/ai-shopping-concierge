@@ -22,16 +22,17 @@ class Weights:
     sem: float = 0.7
     pers: float = 0.25
     pop: float = 0.05
+    rat: float = 0.0          # Phase 13.1: rating term (0 = the spec's three-term score)
 
     @classmethod
     def from_config(cls, cfg: dict) -> Weights:
         r = cfg["ranking"]
-        return cls(r["w_sem"], r["w_pers"], r["w_pop"])
+        return cls(r["w_sem"], r["w_pers"], r["w_pop"], r.get("w_rat", 0.0))
 
     def cold_start(self) -> Weights:
         """Spec 8.4: w_pers = 0, remaining weights renormalized to sum to 1."""
-        total = self.sem + self.pop
-        return Weights(self.sem / total, 0.0, self.pop / total)
+        total = self.sem + self.pop + self.rat
+        return Weights(self.sem / total, 0.0, self.pop / total, self.rat / total)
 
 
 def minmax(x: np.ndarray) -> np.ndarray:
@@ -47,6 +48,18 @@ def popularity_score(counts: np.ndarray, max_count: float) -> np.ndarray:
     """S_pop = log(1 + count) / log(1 + max_count); 0 everywhere when no product has interactions (spec 8.4)."""
     counts = np.asarray(counts, dtype=np.float64)
     return np.log1p(counts) / np.log1p(max_count) if max_count > 0 else np.zeros_like(counts)
+
+
+RATING_PRIOR = 20   # Bayesian prior strength, in ratings (Phase 13.1, fixed before any result)
+
+
+def rating_score(avg: np.ndarray, count: np.ndarray, mean: float, prior: float = RATING_PRIOR) -> np.ndarray:
+    """Bayesian average rating (prior * mean + count * avg) / (prior + count): a few ratings barely move a
+    product away from the catalog mean, and a product with no rating gets the mean (neutral)."""
+    avg = np.asarray(avg, dtype=np.float64)
+    count = np.nan_to_num(np.asarray(count, dtype=np.float64))
+    count = np.where(np.isnan(avg), 0.0, count)
+    return (prior * mean + count * np.nan_to_num(avg, nan=mean)) / (prior + count)
 
 
 def user_vector(rows: np.ndarray, embeddings: np.ndarray, timestamps: np.ndarray | None = None,
@@ -93,7 +106,14 @@ def rank(cands: pd.DataFrame, user_vec: np.ndarray | None, w: Weights, *, catalo
         "s_pop": popularity_score(popularity[rows], popularity.max()),
         "popularity": popularity[rows],
     })
-    out["final"] = w.sem * out["s_sem"] + w.pers * out["s_pers"] + w.pop * out["s_pop"]
+    ratings = catalog["avg_rating"] if "avg_rating" in catalog else None
+    if ratings is not None and ratings.notna().any():
+        bayes = rating_score(ratings.to_numpy(dtype=np.float64)[rows], catalog["rating_count"].to_numpy()[rows],
+                             float(ratings.mean()))
+        out["s_rat"] = minmax(bayes)
+    else:
+        out["s_rat"] = np.zeros(len(rows))
+    out["final"] = w.sem * out["s_sem"] + w.pers * out["s_pers"] + w.pop * out["s_pop"] + w.rat * out["s_rat"]
     out = out.sort_values(["final", "popularity", "product_id"], ascending=[False, False, True],
                           kind="mergesort").reset_index(drop=True)
     out["rank"] = np.arange(1, len(out) + 1)

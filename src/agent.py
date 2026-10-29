@@ -19,7 +19,8 @@ from src.filters import build_mask
 from src.generate import Answer, user_prices, validate_answer
 from src.llm import CallLimitReached, QuotaExhausted
 from src.parse import ParsedQuery, validate
-from src.pipeline import Resources, get_similar, records, respond, result_to_dict, search_products
+from src.pipeline import (Resources, get_similar, product_fields, records, respond, result_to_dict,
+                          search_products)
 
 PROMPT_VERSION = "agent-v2"     # v2: limits merged in Python (v1 let the LLM restate them)
 MAX_HISTORY = 6          # turns kept in the prompt
@@ -126,7 +127,7 @@ def cards(ids: list[str], res: Resources, link: str | None, extra: dict[str, dic
     """Numbered product cards from catalog fields (plus reason/score parts from a search when given)."""
     if not ids:
         return []
-    out = records(rows_of(ids, res)[["product_id", "title", "brand", "category", "price"]])
+    out = records(rows_of(ids, res)[product_fields(res.catalog)])
     for i, c in enumerate(out, start=1):
         c["number"] = i
         c["url"] = link.format(id=c["product_id"]) if link else None
@@ -138,6 +139,10 @@ def cards(ids: list[str], res: Resources, link: str | None, extra: dict[str, dic
 
 def _price(v: Any) -> str:
     return "price not listed" if v is None or pd.isna(v) else f"${v:,.2f}"
+
+
+def _rating(avg: Any, count: Any) -> str:
+    return "not rated" if avg is None or pd.isna(avg) else f"{avg:.1f} ★ ({int(count or 0):,} ratings)"
 
 
 def build_prompt(message: str, state: ChatState, res: Resources) -> str:
@@ -255,7 +260,9 @@ def do_compare(args: dict, state: ChatState, res: Resources, link: str | None) -
     for num, r in zip(ok, rows_of(ids, res).itertuples()):
         feats = [f.strip() for f in str(r.features or "").split(";") if f.strip()][:3]
         rows.append({"number": num, "product": str(r.title)[:80], "brand": r.brand or "not listed",
-                     "category": r.category, "price": _price(r.price), "key features": "; ".join(feats) or "not listed"})
+                     "category": r.category, "price": _price(r.price),
+                     "rating": _rating(getattr(r, "avg_rating", None), getattr(r, "rating_count", 0)),
+                     "key features": "; ".join(feats) or "not listed"})
     priced = [(r.price, num) for num, r in zip(ok, rows_of(ids, res).itertuples()) if pd.notna(r.price)]
     note = f" Number {min(priced)[1]} is the cheapest." if len(priced) >= 2 else ""
     text = f"Here are products {', '.join(map(str, ok))} side by side, using the store's own product details.{note}"

@@ -17,7 +17,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from src import load_config
-from src.pipeline import Resources, get_similar, load_resources, records, result_to_dict, search_products
+from src.pipeline import (Resources, app_config, get_similar, load_resources, records, result_to_dict,
+                          search_products)
 from src.agent import chat_turn, run_action
 from src.store import STORES_DIR, link_template, valid_store_name
 
@@ -66,7 +67,7 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     """
     cfg = load_config()
     app_cfg = cfg.get("app", {})
-    loader = loader or (lambda store: load_resources(cfg, max_calls=app_cfg.get("max_llm_calls"), store=store))
+    loader = loader or (lambda store: load_resources(app_config(cfg), max_calls=app_cfg.get("max_llm_calls"), store=store))
     env_origins = [o.strip() for o in os.environ.get("CONCIERGE_ALLOWED_ORIGINS", "").split(",") if o.strip()]
     origins = allowed_origins if allowed_origins is not None else env_origins or app_cfg.get("allowed_origins", [])
     cache: dict[tuple[str | None, float], Resources] = {}

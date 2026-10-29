@@ -81,3 +81,26 @@ def test_chat_buy_on_a_shortlist_card_opens_that_product(tmp_path, monkeypatch):
     at.button(key="buy-4-1").click().run()
     assert not at.exception
     assert at.session_state["chat_log"][-1]["link"].endswith("/B")             # not shown number 1 (A)
+
+
+def test_chat_cards_show_star_ratings(tmp_path, monkeypatch):
+    import numpy as np
+
+    from src import data, pipeline, store
+    from test_agent import agent_res
+
+    res = agent_res(tmp_path, [{"name": "search", "args": {"request": "ice maker", "category": "Ice Makers"}}],
+                    [gen(["A", "B"])])
+    res.catalog = res.catalog.assign(avg_rating=[4.46, np.nan, 3.0], rating_count=[1234, 0, 4])
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.chat_input[0].set_value("I need an ice maker").run()
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown).replace("\\", "")              # card text is markdown-escaped
+    assert "★ 4.5 (1,234 ratings)" in text and text.count("★") == 1                  # unrated B shows no stars

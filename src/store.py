@@ -21,6 +21,9 @@ STORES_DIR = ROOT / "stores"
 STORE_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 PAGE_SIZE, MAX_PAGES = 250, 200     # Shopify products.json pagination
 FIELDS = ["product_id", "title", "brand", "category", "price", "description", "features"]
+# optional rating columns (generic exports, review apps); mapping keys "rating" and "rating_count" also work
+OPTIONAL_FIELDS = {"rating": ["rating", "average_rating", "avg_rating", "Average rating"],
+                   "rating_count": ["rating_count", "review_count", "reviews", "Review count"]}
 
 # canonical field -> source columns, first non-empty one wins
 PRESETS: dict[str, dict[str, list[str]]] = {
@@ -150,9 +153,10 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     Returns the catalog and a log of rows removed per rule.
     """
     columns = {f: list(PRESETS[preset].get(f, [])) for f in FIELDS}
+    columns.update({f: list(c) for f, c in OPTIONAL_FIELDS.items()})
     for field, column in (mapping or {}).items():
-        if field not in FIELDS:
-            raise ValueError(f"unknown field {field!r}; expected one of {FIELDS}")
+        if field not in columns:
+            raise ValueError(f"unknown field {field!r}; expected one of {FIELDS + list(OPTIONAL_FIELDS)}")
         columns[field] = [column]
     missing = [f for f in ("product_id", "title") if not any(c in feed.columns for c in columns[f])]
     if missing:
@@ -171,6 +175,9 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     feed = merge_woo_variations(feed, log) if preset == "woocommerce" else feed
     log.setdefault("dropped_variations", 0)
     df = pd.DataFrame({f: pick(f) for f in FIELDS})
+    rating = pd.to_numeric(pick("rating"), errors="coerce")
+    df["avg_rating"] = rating.where(rating.between(1, 5))                  # stars 1-5; anything else unknown
+    df["rating_count"] = pd.to_numeric(pick("rating_count"), errors="coerce").fillna(0).clip(lower=0).astype(int)
     df["product_id"] = df["product_id"].map(_clean_id)
     for field in ("title", "description", "features", "brand"):
         df[field] = df[field].map(lambda v: clean_text(v) if isinstance(v, str) else "")   # NaN/None -> ""

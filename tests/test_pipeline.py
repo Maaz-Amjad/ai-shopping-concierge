@@ -126,3 +126,21 @@ def test_search_products_applies_not_x_exclusions(tmp_path):
     res = resources(tmp_path, [parsed, gen(["A", "C"])])
     out = search_products("ice maker, not maker b", res)
     assert "B" not in out.ranked["product_id"].tolist()
+
+
+# ---- Phase 13.1: ratings in the product views and production weights ------------------------------------
+
+def test_app_config_uses_production_weights_and_results_show_ratings(tmp_path):
+    from src.pipeline import app_config, result_to_dict
+
+    cfg = {"ranking": {"w_sem": 0.7, "w_pers": 0.25, "w_pop": 0.05},
+           "app": {"ranking": {"w_sem": 0.6, "w_pers": 0.25, "w_pop": 0.05, "w_rat": 0.1}}}
+    assert app_config(cfg)["ranking"]["w_rat"] == 0.1 and cfg["ranking"] == {"w_sem": 0.7, "w_pers": 0.25,
+                                                                               "w_pop": 0.05}
+    assert app_config({"ranking": {"w_sem": 1}})["ranking"] == {"w_sem": 1}          # no app section: unchanged
+    res = resources(tmp_path, [gen(["A", "B"])])
+    res.catalog = res.catalog.assign(avg_rating=[4.5, np.nan, 3.0], rating_count=[120, 0, 4])
+    out = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"))
+    products = {p["product_id"]: p for p in result_to_dict("ice maker", out, res)["products"]}
+    assert products["A"]["avg_rating"] == 4.5 and products["A"]["rating_count"] == 120
+    assert products["B"]["avg_rating"] is None and "s_rat" in products["A"]

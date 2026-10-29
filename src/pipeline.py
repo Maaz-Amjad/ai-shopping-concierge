@@ -129,7 +129,19 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
 
 
 PRODUCT_FIELDS = ["product_id", "title", "brand", "category", "price"]
-SCORE_FIELDS = ["rank", "final", "s_sem", "s_pers", "s_pop", "cosine"]
+RATING_FIELDS = ["avg_rating", "rating_count"]          # Phase 13.1; absent in older store imports
+SCORE_FIELDS = ["rank", "final", "s_sem", "s_pers", "s_pop", "s_rat", "cosine"]
+
+
+def product_fields(catalog: pd.DataFrame) -> list[str]:
+    """Catalog fields shown for a product (ratings when the catalog has them)."""
+    return PRODUCT_FIELDS + [c for c in RATING_FIELDS if c in catalog]
+
+
+def app_config(cfg: dict) -> dict:
+    """Config for the demo app, API and MCP server: the production ranking weights (app.ranking, with the rating
+    term) replace the evaluated spec weights, which the benchmark and experiments keep using."""
+    return {**cfg, "ranking": cfg.get("app", {}).get("ranking", cfg["ranking"])}
 
 
 def search_products(query: str, res: Resources, *, max_price: float | None = None, min_price: float | None = None,
@@ -167,7 +179,7 @@ def get_similar(product_id: str, res: Resources, n: int = 5) -> pd.DataFrame:
     scores = res.embeddings @ res.embeddings[rows[0]]
     order = np.argsort(-scores, kind="stable")
     top = order[order != rows[0]][:n]                   # never the product itself, even in a tiny catalog
-    out = res.catalog.iloc[top][PRODUCT_FIELDS].reset_index(drop=True)
+    out = res.catalog.iloc[top][product_fields(res.catalog)].reset_index(drop=True)
     return out.assign(similarity=scores[top].astype(float).round(4))
 
 
@@ -186,7 +198,7 @@ def records(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 def result_to_dict(query: str, out: PipelineResult, res: Resources) -> dict[str, Any]:
     """JSON view of a pipeline result: parsed filters, products with score components (NFR-7), answer, flags."""
-    products = res.catalog.iloc[out.ranked["row"].to_numpy()][PRODUCT_FIELDS].reset_index(drop=True)
+    products = res.catalog.iloc[out.ranked["row"].to_numpy()][product_fields(res.catalog)].reset_index(drop=True)
     scores = out.ranked[[c for c in SCORE_FIELDS if c in out.ranked]].reset_index(drop=True)
     reasons = {r.product_id: r.reason for r in out.answer.answer.recommendations} if out.answer.answer else {}
     items = records(pd.concat([products, scores], axis=1))

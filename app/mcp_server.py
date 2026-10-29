@@ -19,7 +19,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from src import load_config, pipeline
-from src.pipeline import Resources, load_resources, records, result_to_dict
+from src.pipeline import Resources, app_config, load_resources, records, result_to_dict
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 
@@ -27,7 +27,7 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldH
 def build_server(loader: Callable[[], Resources] | None = None) -> MCPServer:
     """Create the server; `loader()` returns Resources and is called once, on the first tool call."""
     cfg = load_config()
-    loader = loader or (lambda: load_resources(cfg, max_calls=cfg.get("app", {}).get("max_llm_calls"),
+    loader = loader or (lambda: load_resources(app_config(cfg), max_calls=cfg.get("app", {}).get("max_llm_calls"),
                                                store=os.environ.get("CONCIERGE_STORE") or None))
     cache: list[Resources] = []
 

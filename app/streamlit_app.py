@@ -22,7 +22,7 @@ from app import connection  # noqa: E402
 from app.connection import add_to_claude_desktop, claude_desktop_config_path, claude_desktop_entry  # noqa: E402
 from src import load_config  # noqa: E402
 from src.agent import chat_turn, run_action  # noqa: E402
-from src.pipeline import get_similar, load_resources, result_to_dict, search_products  # noqa: E402
+from src.pipeline import app_config, get_similar, load_resources, result_to_dict, search_products  # noqa: E402
 from src.store import (FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
                        list_stores, read_feed, shopify_feed_url, store_name_from)
 
@@ -45,7 +45,7 @@ st.set_page_config(page_title="Shopping Assistant", page_icon="🛒", layout="wi
 @st.cache_resource(show_spinner="Getting the store ready (first time takes a minute)…")
 def load(store: str | None, version: float):
     cfg = load_config()
-    return load_resources(cfg, max_calls=cfg.get("app", {}).get("max_llm_calls"), store=store)
+    return load_resources(app_config(cfg), max_calls=cfg.get("app", {}).get("max_llm_calls"), store=store)
 
 
 def resources(store: str | None):
@@ -93,6 +93,12 @@ def chip(text: str) -> str:
 
 def money(value) -> str:
     return "price not listed" if value is None else f"${value:,.2f}"
+
+
+def stars(p: dict) -> str | None:
+    """'★ 4.4 (327 ratings)' when the store has ratings for the product."""
+    avg = p.get("avg_rating")
+    return None if avg is None else f"★ {avg:.1f} ({int(p.get('rating_count') or 0):,} ratings)"
 
 
 def understood(pq: dict) -> list[str]:
@@ -176,7 +182,7 @@ with chat_tab:
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([6, 1, 1, 1])
                     c1.markdown(f"**{p['number']}. {md(p['title'])}**  \n"
-                                + " · ".join(md(x) for x in [p.get("brand"), money(p.get("price"))] if x))
+                                + " · ".join(md(x) for x in [p.get("brand"), money(p.get("price")), stars(p)] if x))
                     if p.get("reason"):
                         c1.caption(md(p["reason"]))
                     last = i == len(st.session_state["chat_log"]) - 1          # buttons act on the latest list
@@ -242,7 +248,8 @@ with shop_tab:
                 with st.container(border=True):
                     left, right = st.columns([5, 2])
                     left.markdown(f"**{p['rank']}. {md(p['title'])}**")
-                    left.caption(" · ".join(md(x) for x in [p["brand"], p["category"], money(p["price"])] if x))
+                    left.caption(" · ".join(md(x) for x in [p["brand"], p["category"], money(p["price"]), stars(p)]
+                                            if x))
                     if p.get("reason"):
                         left.markdown(md(p["reason"]))
                     right.metric("Match", f"{round(100 * p['final'])}%")
@@ -253,6 +260,9 @@ with shop_tab:
                         st.progress(min(max(p["s_pers"], 0.0), 1.0))
                         st.write("Popular with shoppers")
                         st.progress(min(max(p["s_pop"], 0.0), 1.0))
+                        if p.get("avg_rating") is not None:
+                            st.write("Well rated by buyers")
+                            st.progress(min(max(p.get("s_rat") or 0.0, 0.0), 1.0))
                     with left.expander("Similar products"):
                         for _, s in get_similar(p["product_id"], res, 3).iterrows():
                             st.markdown(f"- {md(str(s['title'])[:90])} — "

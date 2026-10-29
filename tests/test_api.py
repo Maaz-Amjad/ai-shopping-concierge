@@ -106,3 +106,8 @@ def test_chat_turns_carry_state_and_buttons_need_no_llm(tmp_path):
 def test_widget_card_buttons_send_the_product_id(client):
     js = client.get("/widget.js").text
     assert "product_id: p.product_id" in js and "{item: p.number}" not in js
+
+
+def test_widget_shows_star_ratings(client):
+    js = client.get("/widget.js").text
+    assert "function stars(p)" in js and js.count("stars(p)") >= 3

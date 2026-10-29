@@ -186,14 +186,15 @@ judged-only metrics for unpooled comparisons; S6 items judged in separate batche
 compatibility wording and user-named brands; the error-analysis tag *catalog gap* also covers "fewer than 10 products
 satisfy the parsed limits" (no missing-description check, because cleaning already drops near-empty listings); rendered titles shortened to 10
 words; Streamlit and MCP wrapper first cut (pre-agreed cut list), then built after the evaluation was complete, together
-with a store connector, a chat assistant and other LLM providers (section 11, approved additions).
+with a store connector, a chat assistant and other LLM providers (section 11, approved additions); a fourth,
+rating term in the production ranking only (section 12).
 
 ## 10. Reproducibility
 
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 204 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 212 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -239,7 +240,43 @@ caps, retries, structured output and function calling behave the same for every 
 offline only; all reported results are Gemini results, and other models may parse and answer differently. One
 difference is known: the Claude adapter sends no temperature setting, so fresh calls are not strictly deterministic and repeatability comes from the response cache.
 
-## 12. Future work
+## 12. Production improvements
+
+After the evaluation, the system was extended toward use in a live store, one change at a time, each tuned on dev
+queries only and reported once on test.
+
+### 12.1 Ratings as a ranking signal
+
+Star ratings were not used before: the interaction file supplied only who bought what. The product metadata already
+held each product's average rating and number of ratings (all 10,000 products; median 4.4 stars, middle half
+4.2–4.6), so ratings became a fourth score term, fixed before any result was seen:
+
+- **S_rat** is the Bayesian average (20 × catalog mean + n × average) / (20 + n), min-max normalized within the
+  candidate pool. A product with few ratings stays near the catalog mean; one with none gets the mean, so an imported
+  store without ratings ranks exactly as before.
+- **Weight** chosen from {0, 0.05, 0.10, 0.15, 0.20}, taken from the semantic share. The rule did not say which
+  shoppers to optimize for; 0.10 was best for new shoppers (+0.007 judged-only NDCG@10 [−0.002, +0.019]) and for the
+  two groups averaged, while returning shoppers were flat (within ±0.002). Chosen weights: 0.60 semantic, 0.25
+  personal, 0.05 popularity, 0.10 rating.
+
+| Test, rating weight 0.10 vs 0 | Judged-only NDCG@10 change [95% CI] | Unjudged in top 10 |
+|---|---|---|
+| New shoppers (13 queries) | −0.009 [−0.031, +0.009] | 4.6 % |
+| Returning shoppers (13 queries, 8 users) | −0.006 [−0.015, +0.003] | 3.1 % |
+
+The effect on relevance is **neutral**: both intervals include zero. This is the expected outcome rather than a
+failure, because the relevance labels grade fit to the request, not product quality; a rating term moves better-rated
+products up among similarly relevant ones, which this benchmark cannot reward. It can only show that relevance is not
+materially hurt. For example, for "quiet countertop ice maker under $200" the top three are unchanged and a 3.8-star
+model (84 ratings) and a 4.0-star model leave the top five for 4.3- and 4.1-star models. Whether that helps shoppers
+would need an online test (click-through or conversion), which this project cannot run.
+
+The rating term is used by the demo app, API, chat assistant and MCP server (`app.ranking` in `config.yaml`); every
+experiment above keeps the spec's three-term weights, so all earlier tables reproduce exactly (checked: rebuilt
+catalog values and benchmark runs identical). Ratings are shown on product cards and in the chat comparison table, and
+store imports read optional rating columns (values outside 1–5 are ignored). Review text is still not used.
+
+## 13. Future work
 
 Feed the error analysis back into the parser (penalize categories the user did not state); evaluate on a larger,
 multi-annotator benchmark; reduce generation latency (paid tier, shorter output, streaming); move masked search to a

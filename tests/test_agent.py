@@ -200,3 +200,12 @@ def test_client_limits_are_validated_and_trimmed(tmp_path):
     limits = clean_state(forged, res).limits
     assert len(limits.semantic_query) <= MAX_TEXT and len(limits.exclude_terms) <= 10
     assert limits.brand is None and limits.category == "Ice Makers" and limits.max_price is None
+
+
+def test_cards_and_comparison_show_ratings(tmp_path):
+    res = agent_res(tmp_path, [call("compare", items=[1, 2])], [])
+    res.catalog = res.catalog.assign(avg_rating=[4.46, np.nan, 3.0], rating_count=[1234, 0, 4])
+    out = chat_turn("compare 1 and 2", ChatState(shown=["A", "B"]), res)
+    assert [r["rating"] for r in out.comparison] == ["4.5 ★ (1,234 ratings)", "not rated"]
+    shown = run_action("show_shortlist", {}, ChatState(shortlist=["A"]), res)
+    assert shown.products[0]["avg_rating"] == 4.46 and shown.products[0]["rating_count"] == 1234

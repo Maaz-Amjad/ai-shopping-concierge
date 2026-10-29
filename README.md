@@ -31,6 +31,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 10 [Final report](docs/final_report.md) | done |
 | 11 Demo app, store connector (API + widget), MCP server: `app/`, `src/store.py` | done |
 | 12 Shopping chat agent (`src/agent.py`), website chat bubble, any LLM provider (`src/llm.py`) | done |
+| 13 Production improvements: star ratings in ranking (13.1) | done: test effect on relevance neutral, used by the app |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -63,6 +64,9 @@ with 95% bootstrap confidence intervals.
 - Filter-first and post-filter return the same top 10 on every test query (a neutral result); filter-first is cheaper.
 - Personalization: next-item HitRate@10 6.3% (blend) vs 2.8% (popularity); on query relevance it costs
   -0.026 NDCG@10 [-0.044, -0.007] while precision@10 is unchanged: it ranks some relevant products lower.
+- Star ratings (Phase 13.1) as a fourth ranking term, weight 0.10 chosen on dev: test change in NDCG@10 -0.009
+  [-0.031, +0.009] for new shoppers, i.e. neutral (the labels grade fit to the request, not quality). Used by the app
+  only; the tables above use the spec weights.
 - Grounding: 22/22 answers grounded, 0 invented product IDs. Retrieval p95 11 ms; LLM generation p95 12.7 s (6 s
   end-to-end target not met on the free tier).
 
@@ -97,7 +101,8 @@ paste two lines into any page:
 
 This adds a floating chat bubble (the shopping assistant); add `data-mode="search"` for a plain search box instead.
 
-Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
+Optional rating columns (`rating`/`average_rating` and `rating_count`/`review_count`, or `--map rating=...`) are
+read when present and shown as stars; products without ratings rank as before. Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
 (`product_id,title,brand,category,price,description,features`). API: `POST /search`, `POST /chat` (one chat turn; the
 client sends back the returned state), `POST /chat/action` (card buttons, no LLM call), `GET /similar/{id}`,
 `GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in

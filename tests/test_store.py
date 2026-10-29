@@ -172,3 +172,15 @@ def test_shopify_address_is_cleaned_and_local_addresses_refused():
     for bad in ("localhost:8000", "127.0.0.1", "169.254.169.254", "intranet", "[::1]"):
         with pytest.raises(ValueError):
             shopify_feed_url(bad)
+
+
+def test_optional_rating_columns_are_read_and_checked():
+    feed = pd.DataFrame({"product_id": ["a", "b", "c", "d"], "title": ["A", "B", "C", "D"],
+                         "rating": [4.6, "7", "abc", None], "review_count": [12, 3, "x", None]})
+    cat, _ = import_feed(feed, "generic")
+    assert cat["avg_rating"].tolist()[:1] == [4.6] and cat["avg_rating"].iloc[1:].isna().all()   # 1-5 only
+    assert cat["rating_count"].tolist() == [12, 3, 0, 0]
+    mapped, _ = import_feed(feed.rename(columns={"rating": "Stars"}), "generic", {"rating": "Stars"})
+    assert mapped["avg_rating"].iloc[0] == 4.6
+    plain, _ = import_feed(feed[["product_id", "title"]], "generic")
+    assert plain["avg_rating"].isna().all() and (plain["rating_count"] == 0).all()
