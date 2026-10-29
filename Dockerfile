@@ -3,6 +3,7 @@
 #   docker run -p 8000:8000 --env-file .env -e CONCIERGE_ALLOWED_ORIGINS=https://mystore.com \
 #     -v ./data:/app/data -v ./artifacts:/app/artifacts -v ./stores:/app/stores concierge
 # Put an HTTPS reverse proxy (e.g. Caddy, nginx) in front and set app.trust_proxy: true in config.yaml.
+# Linux hosts: the container runs as uid 1000; if your files belong to another user, add --user "$(id -u):$(id -g)".
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/app/.cache/huggingface

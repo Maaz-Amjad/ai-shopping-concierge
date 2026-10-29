@@ -14,6 +14,7 @@ import secrets
 import threading
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,8 @@ def flatten_shopify(product: dict) -> dict:
     """One Shopify API product -> flat row; price = first variant's price, tags joined with semicolons."""
     variants = product.get("variants") or [{}]
     tags = product.get("tags") or []
+    if isinstance(tags, str):                      # webhooks send "a, b"; products.json a list: same text either way
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
     known = [bool(v["available"]) for v in variants if v.get("available") is not None]
     return {**{k: product.get(k) for k in ("id", "handle", "title", "vendor", "product_type", "body_html")},
             "price": variants[0].get("price"), "tags": "; ".join(tags) if isinstance(tags, list) else tags,
@@ -301,7 +304,7 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
     if catalog.empty:
         raise ValueError("no products left after import")
     log.update(source=source, preset=preset, mapping=mapping or {}, site=site_host(site))
-    with _store_locks[name]:
+    with store_lock(name):
         return write_store(name, catalog, log, model, cfg)
 
 
@@ -332,18 +335,55 @@ def write_store(name: str, catalog: pd.DataFrame, log: dict, model: Any = None, 
     return log
 
 
-_store_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)   # one writer per store at a time
+_store_locks: defaultdict[str, threading.RLock] = defaultdict(threading.RLock)
+STALE_LOCK_SECONDS = 600
+
+
+@contextmanager
+def store_lock(name: str, timeout: float = 60.0):
+    """One writer per store across threads and processes (API webhooks, scheduled --refresh, the app): a lock file
+    created exclusively in the store folder; a lock older than 10 minutes is treated as left over from a crash."""
+    path = STORES_DIR / name / ".lock"
+    deadline = time.monotonic() + timeout
+    if not _store_locks[name].acquire(timeout=timeout):
+        raise TimeoutError(f"store {name!r} is being updated; try again shortly")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        while True:
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                break
+            except FileExistsError:
+                try:
+                    if time.time() - path.stat().st_mtime > STALE_LOCK_SECONDS:
+                        path.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    continue
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"store {name!r} is being updated; try again shortly") from None
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            path.unlink(missing_ok=True)
+    finally:
+        _store_locks[name].release()
 
 
 def shopify_webhook_feed(product: dict) -> pd.DataFrame:
     """A Shopify products/create|update webhook payload -> a one-row feed for the shopify_json preset. Webhook
     variants carry inventory fields instead of `available`; a product that is not active is dropped as unpublished."""
     row = flatten_shopify(product)
-    variants = product.get("variants") or []
-    if row["available"] is None and variants:
+    known = [v for v in product.get("variants") or []
+             if "inventory_management" in v or "inventory_quantity" in v]    # fields missing = stock unknown
+    if row["available"] is None and known:
         row["available"] = any(not v.get("inventory_management") or v.get("inventory_policy") == "continue"
-                               or (v.get("inventory_quantity") or 0) > 0 for v in variants)
-    row["Status"] = product.get("status") or ""
+                               or (v.get("inventory_quantity") or 0) > 0 for v in known)
+    hidden = "published_at" in product and product["published_at"] is None   # not on the online store
+    row["Status"] = "unpublished" if hidden else (product.get("status") or "")
     return pd.DataFrame([row])
 
 
@@ -357,8 +397,36 @@ def woocommerce_webhook_feed(product: dict) -> pd.DataFrame:
         "Short description": product.get("short_description") or "",
         "Regular price": str(product.get("regular_price") or product.get("price") or ""),
         "Sale price": str(product.get("sale_price") or ""), "Categories": names(product.get("categories")),
-        "Tags": names(product.get("tags")), "In stock?": stock,
+        "Tags": names(product.get("tags")), "In stock?": stock, "Brands": names(product.get("brands")),
+        "average_rating": product.get("average_rating"), "rating_count": product.get("rating_count"),
         "Published": "1" if product.get("status") == "publish" else "0"}])
+
+
+def keep_known_fields(new: pd.DataFrame, catalog: pd.DataFrame, same_source: bool) -> pd.DataFrame:
+    """A webhook payload may lack fields the original import had (brand, ratings) or take them from another field
+    (a Shopify CSV's "Product Category" vs the webhook's product_type): keep the stored values so hard filters keep
+    matching catalog values. The full refresh still replaces them."""
+    if new.empty or catalog.empty:
+        return new
+    new = new.copy()
+    by_id = catalog.drop_duplicates("product_id").set_index("product_id")
+    sid = catalog.dropna(subset=["source_id"]).drop_duplicates("source_id").set_index("source_id") \
+        if "source_id" in catalog else None
+    for i, row in new.iterrows():
+        if row["product_id"] in by_id.index:
+            old = by_id.loc[row["product_id"]]
+        elif sid is not None and pd.notna(row.get("source_id")) and row["source_id"] in sid.index:
+            old = sid.loc[row["source_id"]]
+        else:
+            continue
+        if not row.get("brand") or pd.isna(row.get("brand")):
+            new.at[i, "brand"] = old.get("brand")
+        if pd.isna(row.get("avg_rating")) and pd.notna(old.get("avg_rating")):
+            new.at[i, "avg_rating"], new.at[i, "rating_count"] = old.get("avg_rating"), old.get("rating_count", 0)
+        if not same_source:
+            new.at[i, "category"] = old.get("category")
+    new["product_text"] = [build_product_text(r) for _, r in new.iterrows()]
+    return new
 
 
 def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids: list[str] | tuple = (),
@@ -369,27 +437,58 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
     Only products whose text changed are embedded again."""
     check_store_name(name)
     out = STORES_DIR / name
-    with _store_locks[name]:
-        if not (out / "catalog.pkl").exists():
-            raise ValueError(f"no store {name!r}; import it first")
+    if not (out / "catalog.pkl").exists():
+        raise ValueError(f"no store {name!r}; import it first")
+    with store_lock(name):
         log = json.loads((out / "import_log.json").read_text(encoding="utf-8"))
         catalog = pd.read_pickle(out / "catalog.pkl")
+        if "source_id" not in catalog:                     # imported before Phase 13.4
+            catalog["source_id"] = None
+        own = log.get("preset", "generic")
         gone = {str(i) for i in delete_ids}
         new = catalog.iloc[:0]
         if feed is not None and not feed.empty:
-            own = log.get("preset", "generic")
-            preset = preset or own
-            new, _ = import_feed(feed, preset, (log.get("mapping") or None) if preset == own else None)
+            fmt = preset or own                            # a saved mapping belongs to the store's own files only
+            new, _ = import_feed(feed, fmt, (log.get("mapping") or None) if preset is None else None)
             raw_ids = {str(_clean_id(v)) for c in ("id", "ID", "handle", "Handle", "SKU", "product_id")
                        if c in feed for v in feed[c] if _clean_id(v) is not None}
-            gone |= raw_ids - set(new["product_id"]) - set(new.get("source_id", pd.Series(dtype=object)).dropna())
-        source_ids = catalog["source_id"].astype(str) if "source_id" in catalog else pd.Series("", index=catalog.index)
-        drop = catalog["product_id"].astype(str).isin(gone | set(new["product_id"])) | source_ids.isin(gone)
+            gone |= raw_ids - set(new["product_id"]) - set(new["source_id"].dropna())
+            new = keep_known_fields(new, catalog, same_source=fmt == own)
+        pid, sid = catalog["product_id"].astype(str), catalog["source_id"].astype(str)
+        new_ids, new_sids = set(new["product_id"]), set(new["source_id"].dropna().astype(str))
+        drop = pid.isin(gone | new_ids) | sid.isin(gone | new_sids)      # also a product renamed (same platform id)
+        unmatched = [str(i) for i in delete_ids if not (pid == str(i)).any() and not (sid == str(i)).any()]
+        log["not_found"] = []
+        if unmatched and own in ("shopify", "shopify_json") and log.get("site"):
+            try:                                          # a delete carries only Shopify's id: ask the live store
+                live = fetch_products_json(shopify_feed_url(log["site"]))
+                handles = {str(p.get("handle")): str(p.get("id")) for p in (live or {}).get("products", [])
+                           if isinstance(p, dict) and p.get("handle")}
+            except Exception:  # noqa: BLE001 - the next refresh catches up
+                handles = {}
+            if handles:                                   # never empty the store on a failed or empty read
+                drop |= ~pid.isin(set(handles) | new_ids)
+                catalog["source_id"] = pid.map(handles).where(pid.isin(set(handles)), catalog["source_id"])
+            else:
+                log["not_found"] = unmatched
+        elif unmatched:
+            log["not_found"] = unmatched                  # e.g. a CSV store without its address: re-upload later
         merged = pd.concat([catalog[~drop], new], ignore_index=True)
         if merged.empty:
             raise ValueError("the update would leave the store with no products")
         log.update(catalog_stats(merged))
         return write_store(name, merged, log, model, cfg)
+
+
+def read_secrets(name: str) -> dict | None:
+    """The store's secrets if they were set up; never creates them (safe for unauthenticated requests)."""
+    if not valid_store_name(name):
+        return None
+    path = STORES_DIR / name / "secrets.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except (OSError, ValueError):
+        return None
 
 
 def store_secrets(name: str) -> dict:
@@ -404,6 +503,7 @@ def store_secrets(name: str) -> dict:
             return json.loads(path.read_text(encoding="utf-8"))
         values = {"webhook_secret": secrets.token_urlsafe(32), "api_key": secrets.token_urlsafe(32)}
         path.write_text(json.dumps(values), encoding="utf-8")
+        os.chmod(path, 0o600)                              # owner only (on Linux/macOS)
         return values
 
 
@@ -424,23 +524,24 @@ def save_store_files(out: Path, catalog: pd.DataFrame, emb: np.ndarray) -> None:
     API reload). If a swap fails, the previous files are put back, so the store never mixes two imports."""
     files = {"embeddings.npy": emb.astype(np.float32),
              "product_ids.npy": np.asarray(catalog["product_id"].tolist(), dtype=str)}
+    tag = f"{os.getpid()}-{secrets.token_hex(4)}"           # private temp names: never touch another writer's
     for name, arr in files.items():
-        with open(out / f"{name}.tmp", "wb") as f:
+        with open(out / f"{name}.{tag}.tmp", "wb") as f:
             np.save(f, arr)
-    catalog.to_pickle(out / "catalog.pkl.tmp")
+    catalog.to_pickle(out / f"catalog.pkl.{tag}.tmp")
     moved = []
     try:
         for name in (*files, "catalog.pkl"):
             if name != "catalog.pkl" and (out / name).exists():
-                os.replace(out / name, out / f"{name}.bak")
+                os.replace(out / name, out / f"{name}.{tag}.bak")
                 moved.append(name)
-            os.replace(out / f"{name}.tmp", out / name)
+            os.replace(out / f"{name}.{tag}.tmp", out / name)
     except Exception:
         for name in moved:
-            os.replace(out / f"{name}.bak", out / name)
+            os.replace(out / f"{name}.{tag}.bak", out / name)
         raise
     finally:
-        for leftover in [*out.glob("*.tmp"), *out.glob("*.bak")]:
+        for leftover in [*out.glob(f"*.{tag}.tmp"), *out.glob(f"*.{tag}.bak")]:
             leftover.unlink(missing_ok=True)
 
 

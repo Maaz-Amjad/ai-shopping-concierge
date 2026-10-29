@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 251 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 266 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -335,8 +335,13 @@ no query text or IP address (NFR-5), and a Dockerfile (written, not built here: 
 development machine). Stores can now push changes: Shopify and WooCommerce product webhooks are checked with the
 platform's HMAC-SHA256 signature, repeated deliveries are ignored, and each change updates or removes just that product,
 re-embedding only it. Checked live against the running server on a copy of the 300-product store: a signed update was
-applied in 0.8 s (price and "out of stock" stored), its repeat was ignored, a forged signature was refused (401), and
-the 120th request in a minute was rate-limited. Webhooks are paired with the scheduled refresh (daily is enough),
+applied in under a second (price and "out of stock" stored), its repeat was ignored, a forged signature was refused
+(401), and the 121st request in a minute was refused (limit 120). A review then hardened it further: webhook bodies are
+capped at 2 MB, unknown stores answer like a bad signature, API keys are checked before a store is loaded, the client
+address behind a proxy is the one the proxy added, a renamed product replaces its old entry, fields a webhook does not
+carry (brand, ratings, a CSV store's category) keep their stored values, a Shopify delete for a store imported from a
+CSV is resolved against the live store when its address is known, and a lock file keeps the API, the scheduled refresh
+and the app from writing a store at the same time. Webhooks are paired with the scheduled refresh (daily is enough),
 because a missed or out-of-order delivery is only corrected by the next full read. A key placed in a public web page
 is visible to anyone, so for the browser widget the rate limit and the origin allow-list remain the real protection.
 

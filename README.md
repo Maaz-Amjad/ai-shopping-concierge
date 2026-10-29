@@ -136,7 +136,10 @@ because Docker is not installed on the development machine); put an HTTPS revers
 create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update
 or remove that one product (only it is re-embedded). WooCommerce: paste the store's webhook secret (`--secrets`) into
 the webhook form. Shopify signs with its own key: save it with `--set-webhook-secret KEY` or in the app (*Add your
-store → Instant updates*). Keep a daily `--refresh` as the safety net for missed or out-of-order deliveries.
+store → Instant updates*). Keep a daily `--refresh` as the safety net for missed or out-of-order deliveries. Shopify
+delete messages carry only Shopify's numeric id: for a store imported from a CSV export, give the store's address when
+importing so deletes can be checked against the live store (otherwise they are reported as `not_found` until the
+next import). Bodies over 2 MB are refused; webhooks have their own rate limit (600 a minute).
 
 **MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). The app's *Connect to
 Claude Desktop* button sets it up; by hand, add:

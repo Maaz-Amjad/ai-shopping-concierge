@@ -163,8 +163,8 @@ def test_webhooks_reject_bad_signatures_unknown_stores_and_topics(shop_app):
     bad = client.post("/webhooks/shop/shopify", content=body,
                       headers={"X-Shopify-Hmac-Sha256": "x" + sig[1:], "X-Shopify-Topic": "products/update"})
     assert bad.status_code == 401
-    assert client.post("/webhooks/nope/shopify", content=body,
-                       headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update"}).status_code == 404
+    assert client.post("/webhooks/nope/shopify", content=body,          # 401, not 404: store names stay private
+                       headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update"}).status_code == 401
     assert client.post("/webhooks/shop/magento", content=body, headers={}).status_code == 404
     other = client.post("/webhooks/shop/shopify", content=body,
                         headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "orders/create"})

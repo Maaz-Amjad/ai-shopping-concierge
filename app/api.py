@@ -68,6 +68,7 @@ def store_version(store: str | None) -> float:
     return path.stat().st_mtime if path is not None and path.exists() else 0.0
 
 
+MAX_WEBHOOK_BYTES = 2 * 1024 * 1024
 OPEN_PATHS = {"/health", "/widget.js", "/", "/docs", "/openapi.json", "/docs/oauth2-redirect", "/redoc"}
 LLM_PATHS = {"/search", "/chat"}
 WEBHOOK_TOPICS = {"shopify": ({"products/create", "products/update"}, {"products/delete"}),
@@ -80,19 +81,21 @@ class RateLimiter:
     def __init__(self) -> None:
         self.hits: defaultdict[tuple, deque] = defaultdict(deque)
         self.lock = threading.Lock()
+        self.last_sweep = 0.0
 
     def wait(self, key: tuple, limit: int, now: float | None = None) -> float:
         now = time.monotonic() if now is None else now
         with self.lock:
+            if now - self.last_sweep > 60:                # forget clients idle for a minute (bounded memory)
+                for k in [k for k, v in self.hits.items() if not v or v[-1] <= now - 60]:
+                    del self.hits[k]
+                self.last_sweep = now
             q = self.hits[key]
             while q and q[0] <= now - 60:
                 q.popleft()
             if len(q) >= limit:
                 return 60 - (now - q[0])
             q.append(now)
-            if len(self.hits) > 10_000:                     # forget idle clients
-                for k in [k for k, v in self.hits.items() if not v]:
-                    del self.hits[k]
             return 0.0
 
 
@@ -115,7 +118,9 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     app_cfg = cfg.get("app", {})
     if request_log is None and loader is None and app_cfg.get("request_log"):
         request_log = ROOT / app_cfg["request_log"]
-    limits = {"llm": 30, "other": 120, **(app_cfg.get("rate_limit_per_minute") or {}), **(rate_limits or {})}
+    limits = {"llm": 30, "other": 120, "webhook": 600, **(app_cfg.get("rate_limit_per_minute") or {}),
+              **(rate_limits or {})}
+    shared: dict[str, object] = {}                         # one LLM client (call budget) per process
     need_key = app_cfg.get("require_api_key", False) if require_api_key is None else require_api_key
     trust_proxy = bool(app_cfg.get("trust_proxy", False))
     limiter, log_lock = RateLimiter(), threading.Lock()
@@ -132,19 +137,27 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         key = (store, store_version(store))
         if key not in cache:
             try:
-                cache[key] = loader(store)
+                res = loader(store)
             except FileNotFoundError:
                 raise HTTPException(404, f"unknown store {store!r}; import it with python -m src.store") from None
+            for old in [k for k in cache if k[0] == store]:   # an updated store replaces its old copy
+                del cache[old]
+            if "client" in shared:
+                res.client = shared["client"]               # the per-process LLM cap survives reloads
+            else:
+                shared["client"] = res.client
+            cache[key] = res
         return cache[key]
 
     def check_key(store: str | None, key: str | None) -> None:
-        """When API keys are on: the store's key (stores/<name>/secrets.json) or CONCIERGE_API_KEY for the demo."""
+        """When API keys are on: the store's key (stores/<name>/secrets.json) or CONCIERGE_API_KEY for the demo.
+        Checked before the store is loaded; an unknown store and a wrong key look the same (401)."""
         if not need_key:
             return
-        try:
-            expected = store_mod.store_secrets(store)["api_key"] if store else os.environ.get("CONCIERGE_API_KEY")
-        except ValueError:
-            expected = None
+        if store:
+            expected = (store_mod.read_secrets(store) or {}).get("api_key")
+        else:
+            expected = os.environ.get("CONCIERGE_API_KEY")
         if not expected or not key or not hmac.compare_digest(key.encode(), expected.encode()):
             raise HTTPException(401, "missing or wrong API key (X-API-Key header)")
 
@@ -155,10 +168,11 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     async def limit_and_log(request: Request, call_next):
         """Per-client rate limit (429 + Retry-After) and one log line per request (no query text, no IP)."""
         start, path = time.perf_counter(), request.url.path
-        group = None if path in OPEN_PATHS or path.startswith("/webhooks/") or request.method == "OPTIONS" \
-            else "llm" if path in LLM_PATHS else "other"
+        group = None if path in OPEN_PATHS or request.method == "OPTIONS" else "webhook" \
+            if path.startswith("/webhooks/") else "llm" if path in LLM_PATHS else "other"
         forwarded = request.headers.get("x-forwarded-for", "") if trust_proxy else ""
-        client = forwarded.split(",")[0].strip() or (request.client.host if request.client else "?")
+        client = forwarded.split(",")[-1].strip() or (request.client.host if request.client else "?")   # the
+        # last entry is the one the trusted proxy added; earlier ones come from the client and can be made up
         wait = limiter.wait((client, group), int(limits[group])) if group else 0.0
         if wait:
             response = JSONResponse({"detail": "too many requests; please try again shortly"}, status_code=429,
@@ -184,15 +198,15 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
 
     @app.get("/meta")
     def meta(store: str | None = None, x_api_key: str | None = Header(None)) -> dict:
-        res = resources(store)
         check_key(store or None, x_api_key)
+        res = resources(store)
         return {"store": store or "benchmark", "products": len(res.catalog), "categories": res.meta.categories,
                 "brands": res.meta.prompt_brands, "users": len(res.profiles)}
 
     @app.post("/search")
     def search(req: SearchRequest, x_api_key: str | None = Header(None)) -> dict:
-        res = resources(req.store)
         check_key(req.store or None, x_api_key)
+        res = resources(req.store)
         if not req.query.strip():
             raise HTTPException(400, "Please enter a query.")               # spec 14: empty query
         out = search_products(req.query, res, max_price=req.max_price, min_price=req.min_price,
@@ -203,8 +217,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     def chat(req: ChatRequest, x_api_key: str | None = Header(None)) -> dict:
         """One chat turn: the LLM chooses an action, Python validates and runs it (src/agent.py)."""
         store = req.store or None
-        res = resources(store)
         check_key(store, x_api_key)
+        res = resources(store)
         try:
             out = chat_turn(req.message, req.state, res, user_id=req.user_id, n=req.n, link=link_template(store))
         except ValidationError:
@@ -215,8 +229,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     def chat_action(req: ChatAction, x_api_key: str | None = Header(None)) -> dict:
         """A card button (Save / Similar / Buy): runs directly, no LLM call."""
         store = req.store or None
-        res = resources(store)
         check_key(store, x_api_key)
+        res = resources(store)
         try:
             out = run_action(req.action, req.args, req.state, res, n=req.n, link=link_template(store))
         except (ValueError, ValidationError) as exc:
@@ -226,8 +240,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     @app.get("/similar/{product_id}")
     def similar(product_id: str, store: str | None = None, n: int = Query(5, ge=1, le=20),
                 x_api_key: str | None = Header(None)) -> dict:
-        res = resources(store)
         check_key(store or None, x_api_key)
+        res = resources(store)
         try:
             items = get_similar(product_id, res, n)
         except KeyError as exc:
@@ -242,16 +256,19 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
             raise HTTPException(404, "unknown platform; use shopify or woocommerce")
         if not valid_store_name(store):
             raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
-        try:
-            secret = store_mod.store_secrets(store)["webhook_secret"]
-        except ValueError:
-            raise HTTPException(404, f"unknown store {store!r}") from None
-        body = await request.body()
+        if int(request.headers.get("content-length") or 0) > MAX_WEBHOOK_BYTES:
+            raise HTTPException(413, "webhook body too large")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_WEBHOOK_BYTES:
+                raise HTTPException(413, "webhook body too large")
+        secret = (store_mod.read_secrets(store) or {}).get("webhook_secret")
         h = request.headers
         sig = h.get("x-shopify-hmac-sha256" if platform == "shopify" else "x-wc-webhook-signature", "")
         if platform == "woocommerce" and not sig and body.startswith(b"webhook_id="):
             return {"status": "ping"}                     # WooCommerce's test delivery when a webhook is created
-        if not sig or not hmac.compare_digest(sig.encode(), signature(secret, body).encode()):
+        if not secret or not sig or not hmac.compare_digest(sig.encode(), signature(secret, body).encode()):
             raise HTTPException(401, "invalid webhook signature")
         topic = h.get("x-shopify-topic" if platform == "shopify" else "x-wc-webhook-topic", "")
         delivery = h.get("x-shopify-webhook-id" if platform == "shopify" else "x-wc-webhook-delivery-id", "")
@@ -266,6 +283,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
             raise HTTPException(400, "body is not JSON") from None
         if not isinstance(payload, dict):
             raise HTTPException(400, "body is not a JSON object")
+        if platform == "woocommerce" and payload.get("type") == "variation":
+            return {"status": "ignored", "topic": "variation"}   # the parent is updated by the daily refresh
         feed, delete_ids = None, []
         if topic in deletes:
             delete_ids = [str(payload.get("id"))]
@@ -273,17 +292,20 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
             feed = store_mod.shopify_webhook_feed(payload)
         else:
             feed = store_mod.woocommerce_webhook_feed(payload)
-        model = resources(store).model                    # reuse the loaded embedding model
+        model = (await run_in_threadpool(resources, store)).model    # loaded off the event loop; reused
         try:
-            await run_in_threadpool(store_mod.apply_store_changes, store, feed=feed, delete_ids=delete_ids,
-                                    model=model, preset="shopify_json" if platform == "shopify" else "woocommerce")
+            log = await run_in_threadpool(store_mod.apply_store_changes, store, feed=feed, delete_ids=delete_ids,
+                                          model=model,
+                                          preset="shopify_json" if platform == "shopify" else "woocommerce")
+        except TimeoutError:
+            raise HTTPException(503, "store is being updated; retry", headers={"Retry-After": "30"}) from None
         except ValueError as exc:
             raise HTTPException(422, str(exc)[:200]) from None
         if delivery:
             seen_deliveries[(store, delivery)] = None
             while len(seen_deliveries) > 5000:
                 seen_deliveries.popitem(last=False)
-        return {"status": "updated"}
+        return {"status": "not_found" if (log or {}).get("not_found") else "updated"}
 
     @app.get("/widget.js")
     def widget() -> FileResponse:
