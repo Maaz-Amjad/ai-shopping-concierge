@@ -289,3 +289,14 @@ def test_reloaded_store_replaces_the_old_copy_and_keeps_the_llm_budget(tmp_path,
     client.get("/meta")
     client.get("/meta")
     assert len(made) == 2 and made[1].client is made[0].client          # one LLM budget per process
+
+
+def test_stale_webhook_is_reported(shop_app, monkeypatch):
+    from src import store
+
+    client, secret, calls, product, _ = shop_app
+    monkeypatch.setattr(store, "apply_store_changes", lambda *a, **k: {"applied": 0, "stale": ["steel-kettle"]})
+    body, sig = signed(secret, product)
+    r = client.post("/webhooks/shop/shopify", content=body,
+                    headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update"})
+    assert r.status_code == 200 and r.json()["status"] == "stale"

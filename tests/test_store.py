@@ -566,3 +566,27 @@ def test_read_secrets_never_creates_them(tmp_path, monkeypatch):
     assert store.read_secrets("shop") is None and store.read_secrets("missing") is None
     created = store.store_secrets("shop")
     assert store.read_secrets("shop") == created
+
+
+# ---- replay / ordering guard (signed updated_at) ----------------------------------------------------------
+
+def test_webhook_updates_older_than_the_stored_version_are_skipped(tmp_path, monkeypatch):
+    cfg = webhook_store(tmp_path, monkeypatch)
+
+    def send(price, when):
+        product = {**SHOP_PRODUCT, "updated_at": when, "variants": [{**SHOP_PRODUCT["variants"][0], "price": price}]}
+        return store.apply_store_changes("shop", store.shopify_webhook_feed(product), preset="shopify_json",
+                                         model=FakeModel(), cfg=cfg)
+
+    def price():
+        return pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl").set_index("product_id").loc[
+            "steel-kettle", "price"]
+
+    assert send("30.00", "2026-10-30T10:00:00-04:00")["applied"] == 1 and price() == 30.0
+    old = send("20.00", "2026-10-30T09:00:00-04:00")                      # older: out of order or replayed
+    assert old["applied"] == 0 and old["stale"] == ["steel-kettle"] and price() == 30.0
+    assert send("25.00", "2026-10-30T14:00:00Z")["stale"] == ["steel-kettle"]   # same instant, other time zone
+    assert send("35.00", "2026-10-30T14:00:01Z")["applied"] == 1 and price() == 35.0
+    woo = store.woocommerce_webhook_feed({"id": 7, "sku": "K-7", "name": "Kettle", "status": "publish",
+                                          "date_modified_gmt": "2026-10-30T12:00:00"})
+    assert woo["date_modified_gmt"].iloc[0] == "2026-10-30T12:00:00"
