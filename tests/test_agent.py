@@ -144,3 +144,59 @@ def test_refining_keeps_earlier_limits_unless_removed_or_a_new_search(tmp_path):
     assert dropped.state.limits.exclude_terms == ["maker b"]
     fresh = chat_turn("show me range hoods instead", dropped.state, res)
     assert fresh.state.limits.exclude_terms == [] and fresh.state.limits.brand is None
+
+
+def test_card_buttons_act_on_the_card_product_not_its_number(tmp_path):
+    res = agent_res(tmp_path, [], [])
+    state = ChatState(shown=["A", "B", "C"], shortlist=["C"])        # shortlist card 1 is C, shown number 1 is A
+    bought = run_action("buy", {"product_id": "C"}, state, res, link=LINK)
+    assert bought.link == LINK.format(id="C")
+    saved = run_action("save", {"product_id": "B"}, bought.state, res, link=LINK)
+    assert saved.state.shortlist == ["C", "B"]
+    similar = run_action("similar", {"product_id": "C"}, saved.state, res, link=LINK)
+    assert "C" not in [p["product_id"] for p in similar.products] and similar.products
+    with pytest.raises(ValueError):
+        run_action("buy", {"product_id": "nope"}, state, res, link=LINK)
+
+
+def test_call_cap_degrades_to_a_catalog_answer_instead_of_failing(tmp_path):
+    res = agent_res(tmp_path, [], [])
+    res.client.max_calls = 0                                          # cap reached before the tool call
+    out = chat_turn("ice maker", None, res, link=LINK)
+    assert out.action == "search" and out.products and out.flags["fallback"]
+    res = agent_res(tmp_path / "b", [call("search", request="ice maker")], [])
+    res.client.max_calls = 1                                          # tool call allowed, the answer is not
+    out = chat_turn("ice maker", None, res, link=LINK)
+    assert out.action == "search" and out.products and out.flags["generation_fallback"] == "template"
+
+
+def test_text_where_a_list_is_expected_is_one_item(tmp_path):
+    res = agent_res(tmp_path, [call("search", request="ice maker or hood", exclude_terms="hood"),
+                               call("search", request="ice maker or hood", remove_limits="exclude_terms")],
+                    [gen(["A", "B"]), gen(["A", "B"])])
+    first = chat_turn("anything but a hood", None, res)
+    assert first.state.limits.exclude_terms == ["hood"]
+    second = chat_turn("hoods are fine too", first.state, res)
+    assert second.state.limits.exclude_terms == []
+
+
+def test_badly_typed_tool_arguments_fall_back_instead_of_failing(tmp_path):
+    res = agent_res(tmp_path, [call("search", request="ice maker", max_price="$110", min_price="cheap")],
+                    [gen(["A"], "One under $110.")])
+    out = chat_turn("ice maker under $110", None, res)
+    assert out.state.limits.max_price == 110 and out.state.limits.min_price is None
+    parsed = json.dumps({"semantic_query": "ice maker"})
+    res = agent_res(tmp_path / "b", [{"name": "search", "args": ["ice maker"]}], [parsed, gen(["A", "B"])])
+    out = chat_turn("ice maker", None, res)
+    assert out.action == "search" and out.flags["fallback"]
+
+
+def test_client_limits_are_validated_and_trimmed(tmp_path):
+    from src.agent import MAX_TEXT, Limits
+
+    res = agent_res(tmp_path, [], [])
+    forged = ChatState(limits=Limits(semantic_query="x" * 100_000, exclude_terms=[f"t{i}" for i in range(1000)],
+                                     brand="Nope", category="Ice Makers", max_price=-5))
+    limits = clean_state(forged, res).limits
+    assert len(limits.semantic_query) <= MAX_TEXT and len(limits.exclude_terms) <= 10
+    assert limits.brand is None and limits.category == "Ice Makers" and limits.max_price is None

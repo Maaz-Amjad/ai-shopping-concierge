@@ -59,3 +59,25 @@ def test_chat_tab_searches_refines_and_saves(tmp_path, monkeypatch):
     assert not at.exception and "You have 1 saved" in " ".join(m.value for m in at.markdown)
     at.chat_input[0].set_value("compare 1 and 2").run()
     assert not at.exception and at.dataframe                                    # comparison table shown
+
+
+def test_chat_buy_on_a_shortlist_card_opens_that_product(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+    from test_agent import agent_res
+
+    res = agent_res(tmp_path, [{"name": "search", "args": {"request": "ice maker", "category": "Ice Makers"}},
+                               {"name": "show_shortlist", "args": {}}], [gen(["A", "B"])])
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.chat_input[0].set_value("I need an ice maker").run()
+    at.button(key="save-1-2").click().run()                                    # saves B
+    at.chat_input[0].set_value("what's on my list?").run()                     # shortlist card 1 = B
+    at.button(key="buy-4-1").click().run()
+    assert not at.exception
+    assert at.session_state["chat_log"][-1]["link"].endswith("/B")             # not shown number 1 (A)

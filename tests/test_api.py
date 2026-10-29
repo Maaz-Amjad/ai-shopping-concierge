@@ -101,3 +101,8 @@ def test_chat_turns_carry_state_and_buttons_need_no_llm(tmp_path):
     assert c.post("/chat/action", json={"action": "checkout", "state": saved["state"]}).status_code == 400
     assert c.post("/chat", json={"message": "hi", "state": {"shown": "not a list"}}).status_code == 400
     assert c.post("/chat", json={"message": "hi", "store": "../x"}).status_code == 400
+
+
+def test_widget_card_buttons_send_the_product_id(client):
+    js = client.get("/widget.js").text
+    assert "product_id: p.product_id" in js and "{item: p.number}" not in js

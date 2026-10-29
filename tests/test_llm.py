@@ -233,3 +233,28 @@ def test_tool_calls_are_cached_and_validated(tmp_path):
     with pytest.raises(ValueError, match="no valid function call"):
         client.generate_tool_call("hello", "agent-v1", TOOLS)                 # empty response, not cached
     assert len((tmp_path / "c.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_cache_key_separates_providers_and_servers_but_keeps_gemini_keys(tmp_path):
+    import hashlib
+
+    def key(**kw):
+        return LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", transport=lambda *a: "", **kw).cache_key(
+            "p", "v", None)
+
+    old = hashlib.sha256(json.dumps(["m", "v", None, 0.0, 400, "p"], ensure_ascii=False,
+                                    sort_keys=True).encode("utf-8")).hexdigest()
+    assert key() == old                                               # existing Gemini cache stays valid
+    keys = {key(), key(provider="openai"), key(provider="openai", base_url="http://localhost:11434/v1"),
+            key(provider="openai", base_url="https://api.groq.com/openai/v1"), key(provider="anthropic")}
+    assert len(keys) == 5
+
+
+def test_invalid_tool_call_responses_are_not_cached(tmp_path):
+    tools = [{"name": "search", "description": "d", "parameters": {"type": "object", "properties": {}}}]
+    replies = iter(['{"name": "bogus", "args": {}}', '{"name": "search", "args": {}}'])
+    c = LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", rpm=1e9, transport=lambda *a: "",
+                  tool_transport=lambda *a: next(replies), sleep=lambda s: None)
+    with pytest.raises(ValueError):
+        c.generate_tool_call("p", "v", tools)
+    assert c.generate_tool_call("p", "v", tools)["name"] == "search" and c.calls_made == 2
