@@ -232,3 +232,13 @@ def test_error_tags_parse_error_over_filtering_and_drift():
     tags = error_tags("q1", gold, parsed, per_query, qrels, catalog)
     # "a" fits gold but is removed by the invented category; only 1 product passes the filters.
     assert tags == ["parse error", "over-filtering", "catalog gap", "personalization drift"]
+
+
+def test_adaptive_rows_use_g_only_for_queries_with_limits():
+    from src.evaluate import adaptive_rows
+
+    a = pd.DataFrame({"query_id": ["q1", "q1", "q2", "q2"], "weights": ["base", "g", "base", "g"],
+                      "delta_NDCG@10_judged_only": [0.1, 0.2, 0.3, 0.4], "unjudged@10": [0.0, 0.5, 0.0, 0.5]})
+    rows = adaptive_rows(a, {"q1"}, "g", "base")
+    assert rows.sort_values("query_id")["delta_NDCG@10_judged_only"].tolist() == [0.2, 0.3]
+    assert rows["unjudged@10"].mean() == 0.25

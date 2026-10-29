@@ -184,3 +184,8 @@ def test_weights_with_limits_moves_part_of_the_personal_share_to_semantic():
     w = Weights(0.6, 0.25, 0.05, 0.1).with_limits(0.25)
     assert (w.sem, w.pers, w.pop, w.rat) == pytest.approx((0.7875, 0.0625, 0.05, 0.1))
     assert Weights(0.7, 0.25, 0.05).with_limits(1.0) == Weights(0.7, 0.25, 0.05)
+
+
+def test_with_limits_factor_is_kept_between_0_and_1():
+    assert Weights(0.6, 0.25, 0.05, 0.1).with_limits(5) == Weights(0.6, 0.25, 0.05, 0.1)
+    assert Weights(0.6, 0.25, 0.05).with_limits(-1).pers == 0.0
