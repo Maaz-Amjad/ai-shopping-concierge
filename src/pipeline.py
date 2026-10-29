@@ -123,16 +123,19 @@ SCORE_FIELDS = ["rank", "final", "s_sem", "s_pers", "s_pop", "cosine"]
 
 def search_products(query: str, res: Resources, *, max_price: float | None = None, min_price: float | None = None,
                     category: str | None = None, brand: str | None = None, n: int | None = None,
-                    user_id: str | None = None) -> PipelineResult:
+                    user_id: str | None = None, use_exclusions: bool = True) -> PipelineResult:
     """Tool interface (spec 11): the LLM parses the query; filters passed explicitly (a store's UI or an AI agent)
-    override the parsed ones and are validated like parser output (unknown category/brand dropped and logged)."""
+    override the parsed ones and are validated like parser output (unknown category/brand dropped and logged).
+
+    "not X" exclusions are applied by default (S5x, spec 8.3), since users see them as understood limits.
+    """
     explicit = {k: v for k, v in {"max_price": max_price, "min_price": min_price, "category": category,
                                   "brand": brand}.items() if v is not None}
     if not explicit:
-        return respond(query, res, user_id=user_id, n=n)
+        return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions)
     pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
     parsed, log = validate(pr.parsed.model_copy(update=explicit), query, res.meta)
-    out = respond(query, res, user_id=user_id, n=n, parsed=parsed)
+    out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions)
     out.flags.update(parse_log=pr.log + [f"explicit filter: {k}={v}" for k, v in explicit.items()] + log,
                      parser_fallback=pr.fallback)
     return out

@@ -50,7 +50,10 @@ def test_similar_and_widget_and_demo_page(client):
     js = client.get("/widget.js")
     assert js.status_code == 200 and "javascript" in js.headers["content-type"] and "textContent" in js.text
     assert "innerHTML" not in js.text                                   # product text is never parsed as HTML
-    assert 'src="/widget.js"' in client.get("/").text
+    assert 'src="/widget.js" data-store=""' in client.get("/").text
+    page = client.get("/", params={"store": "toy"}).text
+    assert 'data-store="toy"' in page and "Demo store: toy" in page
+    assert client.get("/", params={"store": '"><script>'}).status_code == 400
 
 
 # ---- verifier findings, Phase 11 (29 Oct) -------------------------------------------------------------

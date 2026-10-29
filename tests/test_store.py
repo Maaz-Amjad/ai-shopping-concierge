@@ -146,3 +146,18 @@ def test_numeric_ids_with_missing_values_stay_integers():
     feed = pd.DataFrame({"product_id": [1, None, 3], "title": ["A", "B", "C"]})
     cat, _ = import_feed(feed, "generic")
     assert cat["product_id"].tolist() == ["1", "3"]
+
+
+def test_format_detection_and_friendly_names(tmp_path):
+    from src.store import detect_preset, shopify_feed_url, store_name_from
+
+    assert detect_preset(read_feed(write(tmp_path, "s.csv", SHOPIFY_CSV))) == "shopify"
+    assert detect_preset(read_feed(write(tmp_path, "w.csv", WOO_CSV))) == "woocommerce"
+    assert detect_preset(pd.DataFrame(columns=["handle", "title", "vendor"])) == "shopify_json"
+    assert detect_preset(pd.DataFrame(columns=["product_id", "title"])) == "generic"
+    assert detect_preset(pd.DataFrame(columns=["Item", "Cost"])) is None
+    assert store_name_from("My Shop!") == "my-shop" and store_name_from("https://Shop.example.com/x") == "shop-example-com"
+    assert store.valid_store_name(store_name_from("../../etc")) and store_name_from("!!!") == "mystore"
+    assert shopify_feed_url("https://mystore.com/collections/all") == "https://mystore.com/products.json"
+    with pytest.raises(ValueError):
+        shopify_feed_url("  ")

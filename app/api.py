@@ -102,9 +102,12 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         return FileResponse(APP_DIR / "widget.js", media_type="application/javascript")
 
     @app.get("/", response_class=HTMLResponse)
-    def demo_page() -> str:
-        """A blank 'store page' with the widget pasted in, exactly as a store owner would."""
-        return (APP_DIR / "demo_store.html").read_text(encoding="utf-8")
+    def demo_page(store: str | None = None) -> str:
+        """A blank 'store page' with the widget pasted in, exactly as a store owner would (?store=<name>)."""
+        if store is not None and not valid_store_name(store):
+            raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
+        page = (APP_DIR / "demo_store.html").read_text(encoding="utf-8")
+        return page.replace("{{STORE}}", store or "").replace("{{STORE_LABEL}}", f"Demo store: {store or 'appliances'}")
 
     return app
 

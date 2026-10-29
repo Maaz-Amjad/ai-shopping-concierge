@@ -197,11 +197,19 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
 def build_store(name: str, source: str | Path, preset: str = "generic", mapping: dict[str, str] | None = None,
                 model: Any = None, cfg: dict | None = None) -> dict:
     """Import a feed and save the catalog and its embeddings under stores/<name>/ (loadable by load_resources)."""
+    check_store_name(name)
+    return build_store_from_feed(name, read_feed(source), preset, mapping, model, cfg, source=str(source))
+
+
+def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic",
+                          mapping: dict[str, str] | None = None, model: Any = None, cfg: dict | None = None,
+                          source: str = "upload") -> dict:
+    """Same as build_store for a feed already read (the demo app's upload and store-link flows)."""
     from src.embed import encode_products, load_model, save_embeddings
 
     check_store_name(name)
     cfg = cfg or load_config()
-    catalog, log = import_feed(read_feed(source), preset, mapping)
+    catalog, log = import_feed(feed, preset, mapping)
     if catalog.empty:
         raise ValueError("no products left after import")
     model = model or load_model(cfg["embedding"]["model"])
@@ -210,9 +218,38 @@ def build_store(name: str, source: str | Path, preset: str = "generic", mapping:
     out.mkdir(parents=True, exist_ok=True)
     catalog.to_pickle(out / "catalog.pkl")
     save_embeddings(emb, catalog["product_id"].tolist(), out)
-    log.update(store=name, source=str(source), preset=preset, mapping=mapping or {})
+    log.update(store=name, source=source, preset=preset, mapping=mapping or {})
     (out / "import_log.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     return log
+
+
+def detect_preset(feed: pd.DataFrame) -> str | None:
+    """Guess the export format from its columns; None when no preset fits (ask the user to map columns)."""
+    cols = set(feed.columns)
+    if {"Handle", "Title"} <= cols:
+        return "shopify"
+    if {"handle", "title"} <= cols or {"id", "title", "vendor"} <= cols:
+        return "shopify_json"
+    if "Name" in cols and ({"Regular price", "Sale price"} & cols or "SKU" in cols):
+        return "woocommerce"
+    if {"product_id", "title"} <= cols:
+        return "generic"
+    return None
+
+
+def store_name_from(text: str) -> str:
+    """Turn any label ('My Shop!', 'https://shop.example.com') into a valid store name."""
+    text = re.sub(r"^https?://", "", str(text).strip().lower()).split("/")[0]
+    name = re.sub(r"[^a-z0-9_-]+", "-", text).strip("-")[:64]
+    return name or "mystore"
+
+
+def shopify_feed_url(address: str) -> str:
+    """'mystore.com' or 'https://mystore.com/collections/x' -> 'https://mystore.com/products.json'."""
+    host = re.sub(r"^https?://", "", address.strip()).split("/")[0]
+    if not host:
+        raise ValueError("enter the store's web address, e.g. mystore.com")
+    return f"https://{host}/products.json"
 
 
 def list_stores() -> list[str]:

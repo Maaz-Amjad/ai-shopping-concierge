@@ -24,13 +24,14 @@ def test_demo_app_searches_personalizes_and_escapes_store_text(tmp_path, monkeyp
 
     at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
     assert not at.exception
-    assert [s.label for s in at.sidebar.selectbox][:2] == ["Store", "Shopper"]
+    assert [s.label for s in at.sidebar.selectbox][:2] == ["Shop", "Who is shopping?"]
+    assert not any("python" in c.value or "uvicorn" in c.value for c in at.code if "widget" not in c.value)
     at.text_input(key="query").set_value("ice maker").run()
     assert not at.exception
-    assert "`category: Ice Makers`" in " ".join(m.value for m in at.markdown)
+    assert "`category: Ice Makers`" in " ".join(m.value for m in at.markdown)       # "I understood: ..."
     assert at.info[0].value.startswith("Two \[ice makers\]\(http://x\)")      # link from store/LLM text escaped
     cards = [m.value for m in at.markdown if m.value.startswith("**1.")]
     assert cards and "ice maker a" in cards[0]
     at.sidebar.selectbox[1].select_index(1).run()                                    # returning shopper
     assert not at.exception
-    assert any("personalization on" in c.value for c in at.caption)
+    assert any("Personalization: on" in c.value for c in at.caption)

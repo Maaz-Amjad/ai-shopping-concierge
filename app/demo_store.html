@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Demo Store</title>
+  <title>{{STORE_LABEL}}</title>
   <style>
     body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #fcfcfb; color: #1d1d1b; }
     header { padding: 16px 24px; border-bottom: 1px solid #e3e1da; font-weight: 700; }
@@ -12,13 +12,12 @@
   </style>
 </head>
 <body>
-  <header>Demo Store</header>
+  <header>{{STORE_LABEL}}</header>
   <main>
-    <p>This page stands in for an existing store. The search box below is the concierge widget, added with two lines:</p>
-    <p><code>&lt;div id="concierge-widget"&gt;&lt;/div&gt;</code><br>
-       <code>&lt;script src="/widget.js" data-store=""&gt;&lt;/script&gt;</code></p>
+    <p>This page stands in for your store's website. The search box below is the shopping assistant, exactly as
+       your customers would see it.</p>
     <div id="concierge-widget"></div>
-    <script src="/widget.js"></script>
+    <script src="/widget.js" data-store="{{STORE}}"></script>
   </main>
 </body>
 </html>

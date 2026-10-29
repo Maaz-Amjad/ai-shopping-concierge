@@ -193,11 +193,12 @@ words; Streamlit and MCP wrapper cut
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 169 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 173 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
-The pipeline is packaged three ways, all read-only and built on the same code that was evaluated: a Streamlit demo
+The pipeline is packaged three ways, all read-only and built on the same code that was evaluated (with the "not X"
+exclusions on, i.e. S5x, plus personalization for returning shoppers): a Streamlit demo
 (query box, new or returning shopper, enforced limits, ranked products with score components, similar products,
 grounded answer); a store connector (an importer for Shopify, WooCommerce or any CSV/JSON product export, a REST API,
 and a two-line drop-in search widget); and an MCP server exposing `search_products` and `get_similar` to AI shopping

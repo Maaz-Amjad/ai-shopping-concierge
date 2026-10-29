@@ -1,14 +1,18 @@
 """Read-only MCP server (spec 11 / FR-U3): AI shopping agents can search a store and find similar products.
 
-Run (stdio): .venv/Scripts/python.exe -m app.mcp_server            store = $CONCIERGE_STORE (default: benchmark)
-Claude Desktop / Claude Code config: command = <venv python>, args = ["-m", "app.mcp_server"], cwd = project root.
+Run (stdio): .venv/Scripts/python.exe app/mcp_server.py            store = $CONCIERGE_STORE (default: benchmark)
+Claude Desktop: the demo app's "Connect to Claude Desktop" button writes the settings (app/connection.py).
 No write tools: nothing here can change a catalog, order, or cart.
 """
 
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from typing import Any, Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # so `python app/mcp_server.py` works from anywhere
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
