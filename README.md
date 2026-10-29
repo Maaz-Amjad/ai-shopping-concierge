@@ -103,7 +103,7 @@ client sends back the returned state), `POST /chat/action` (card buttons, no LLM
 `GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in
 `stores/` (not committed); their shoppers have no history, so personalization is off for them. Browsers may call the
 API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIERGE_ALLOWED_ORIGINS`
-(comma-separated), so add your store's domain there. Each server process makes at most `app.max_llm_calls` Gemini
+(comma-separated), so add your store's domain there. Each server process makes at most `app.max_llm_calls` LLM
 calls (default 300), then answers from catalog fields only. The API listens on localhost; put it behind a proxy with
 authentication before exposing it.
 

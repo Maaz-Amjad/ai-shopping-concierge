@@ -193,7 +193,7 @@ with a store connector, a chat assistant and other LLM providers (section 11, ap
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 195 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 204 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -210,10 +210,14 @@ benchmark results above are for the Appliances catalog only; other stores were t
 website chat bubble. Each turn, the LLM chooses one of eight actions by function calling (search or refine, compare,
 similar, save, remove, show shortlist, buy link, ask a question) and Python validates the arguments and runs the
 action, so the rule "the LLM extracts, Python enforces" still holds: limits go through the same catalog validation and
-hard filters, every answer goes through the grounding validator, and the conversation state the client sends back is
-re-validated each turn. The assistant never places orders; "buy" returns the product page. It was evaluated on scripted
-conversations, each turn checked for the expected action, the gold limits (price, brand, "not X"), refinements
-(cheaper, a dropped price limit, a dropped brand) and grounding:
+hard filters, search answers and clarifying replies go through the grounding validator (compare, save, shortlist and
+buy replies are templates filled from catalog fields), and the conversation state the client sends back is
+re-validated each turn, including its limits. When the LLM call cap is reached or the model returns an unusable
+call, the turn falls back to a plain search answered from catalog fields. The assistant never places orders; "buy"
+returns the product page. It was evaluated on scripted conversations, each turn checked for the expected action, the
+gold limits (price, brand, "not X"), refinements and grounding. *Refinements* adds up three checks (results got
+cheaper, a dropped price limit is gone, a dropped brand is gone); *Grounded* is meaningful for search and clarifying
+turns, the others are templates and always count as grounded:
 
 | Run | Turns | Right action | Gold limits | Refinements | Grounded |
 |---|---|---|---|---|---|

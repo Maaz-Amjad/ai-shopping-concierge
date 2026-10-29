@@ -240,6 +240,7 @@ class LLMClient:
         self.base_delay = base_delay
         default, default_tools = transports_for(provider, base_url, api_key_env)
         self.provider = provider
+        self.base_url = base_url
         self.transport = transport or default
         self.tool_transport = tool_transport or default_tools
         self.sleep = sleep
@@ -260,11 +261,11 @@ class LLMClient:
         return cache
 
     def cache_key(self, prompt: str, prompt_version: str, schema: type[BaseModel] | None) -> str:
-        payload = json.dumps(
-            [self.model, prompt_version, schema.model_json_schema() if schema else None,
-             self.temperature, self.max_output_tokens, prompt],
-            ensure_ascii=False, sort_keys=True,
-        )
+        parts: list = [self.model, prompt_version, schema.model_json_schema() if schema else None,
+                       self.temperature, self.max_output_tokens, prompt]
+        if self.provider != "gemini" or self.base_url:     # same model name on two servers: separate entries
+            parts.append({"provider": self.provider, "base_url": self.base_url})   # (Gemini keys unchanged)
+        payload = json.dumps(parts, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _append_jsonl(self, path: Path, row: dict) -> None:
@@ -343,6 +344,10 @@ class LLMClient:
     def _call_and_store(self, key: str, prompt: str, schema: type[BaseModel] | None, prompt_version: str,
                         tools: list[dict] | None = None) -> str:
         text = self._call_with_backoff(prompt, schema, prompt_version, tools)
+        if tools:                             # cache only a call to one of the offered functions
+            call = json.loads(text) if text.strip() else {}
+            if not isinstance(call, dict) or call.get("name") not in {t["name"] for t in tools}:
+                raise ValueError(f"no valid function call in response: {text[:200]!r}")
         if schema is not None:
             schema.model_validate_json(text)  # raises ValidationError (empty text included)
         if not text.strip():

@@ -11,8 +11,9 @@ import pandas as pd
 
 from src import ROOT, load_config, set_seed
 from src.filters import relaxation_suggestions
-from src.generate import MAX_WORDS, GenerationResult, answer_text, generate_answer, unpriced_section
-from src.llm import LLMClient, provider_settings
+from src.generate import (MAX_WORDS, GenerationResult, answer_text, generate_answer, no_result_answer,
+                          template_answer, unpriced_section)
+from src.llm import CallLimitReached, LLMClient, provider_settings
 from src.parse import CatalogMeta, ParsedQuery, parse_query, validate
 from src.personalize import Weights, build_profiles, rank
 from src.retrieve import DenseIndex, retrieve
@@ -74,10 +75,11 @@ class PipelineResult:
 
 
 def respond(query: str, res: Resources, user_id: str | None = None, n: int | None = None,
-            parsed: ParsedQuery | None = None, use_exclusions: bool = False) -> PipelineResult:
+            parsed: ParsedQuery | None = None, use_exclusions: bool = False, llm: bool = True) -> PipelineResult:
     """Answer one query (spec 11). Pass `parsed` to reuse a cached parse; unknown users are cold-start.
 
     use_exclusions=False matches S6 = S5 + personalization; True adds the optional exclusions (spec 8.3).
+    llm=False makes no LLM call: semantic-only search (unless `parsed` is given) and the template answer.
     """
     from src.embed import encode_query, use_query_instruction
 
@@ -85,7 +87,10 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     n = n or cfg["generation"]["top_n"]
     flags: dict[str, Any] = {}
     t = time.perf_counter()
-    if parsed is None:
+    if parsed is None and not llm:
+        parsed = ParsedQuery(semantic_query=query)
+        flags.update(parse_log=[], parser_fallback=True)
+    elif parsed is None:
         pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
         parsed = pr.parsed
         flags.update(parse_log=pr.log, parser_fallback=pr.fallback)
@@ -109,7 +114,12 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     t = time.perf_counter()
     items = res.catalog.iloc[ranked["row"].to_numpy()].reset_index(drop=True)
     suggestions = relaxation_suggestions(res.catalog, parsed) if items.empty else None
-    answer = generate_answer(query, parsed, items, res.client, res.brands, n_requested=n, suggestions=suggestions)
+    if llm:
+        answer = generate_answer(query, parsed, items, res.client, res.brands, n_requested=n, suggestions=suggestions)
+    elif items.empty:
+        answer = GenerationResult(no_result_answer(suggestions or []), None, fallback="no_result")
+    else:
+        answer = GenerationResult(template_answer(items, n), None, fallback="template")
     if not result.unpriced.empty:
         answer.text += "\n" + unpriced_section(res.catalog.iloc[result.unpriced["row"].to_numpy()])
     timings["generate"] = (time.perf_counter() - t) * 1000
@@ -129,17 +139,24 @@ def search_products(query: str, res: Resources, *, max_price: float | None = Non
     override the parsed ones and are validated like parser output (unknown category/brand dropped and logged).
 
     "not X" exclusions are applied by default (S5x, spec 8.3), since users see them as understood limits.
+    Once the per-process LLM call cap is reached (app.max_llm_calls), it answers from catalog fields only (NFR-4).
     """
     explicit = {k: v for k, v in {"max_price": max_price, "min_price": min_price, "category": category,
                                   "brand": brand}.items() if v is not None}
-    if not explicit:
-        return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions)
-    pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
-    parsed, log = validate(pr.parsed.model_copy(update=explicit), query, res.meta)
-    out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions)
-    out.flags.update(parse_log=pr.log + [f"explicit filter: {k}={v}" for k, v in explicit.items()] + log,
-                     parser_fallback=pr.fallback)
-    return out
+    try:
+        if not explicit:
+            return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions)
+        pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
+        parsed, log = validate(pr.parsed.model_copy(update=explicit), query, res.meta)
+        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions)
+        out.flags.update(parse_log=pr.log + [f"explicit filter: {k}={v}" for k, v in explicit.items()] + log,
+                         parser_fallback=pr.fallback)
+        return out
+    except CallLimitReached:
+        parsed, log = validate(ParsedQuery(semantic_query=query, **explicit), query, res.meta)
+        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions, llm=False)
+        out.flags.update(parse_log=log + ["LLM call limit reached: catalog-only answer"], parser_fallback=True)
+        return out
 
 
 def get_similar(product_id: str, res: Resources, n: int = 5) -> pd.DataFrame:
@@ -148,8 +165,8 @@ def get_similar(product_id: str, res: Resources, n: int = 5) -> pd.DataFrame:
     if len(rows) == 0:
         raise KeyError(f"unknown product_id {product_id}")
     scores = res.embeddings @ res.embeddings[rows[0]]
-    scores[rows[0]] = -np.inf
-    top = np.argsort(-scores, kind="stable")[:n]
+    order = np.argsort(-scores, kind="stable")
+    top = order[order != rows[0]][:n]                   # never the product itself, even in a tiny catalog
     out = res.catalog.iloc[top][PRODUCT_FIELDS].reset_index(drop=True)
     return out.assign(similarity=scores[top].astype(float).round(4))
 

@@ -113,8 +113,8 @@
         c.appendChild(el("div", "cw-meta", [p.brand || "", price(p.price)].filter(Boolean).join(" · ")));
         if (p.reason) c.appendChild(el("div", null, p.reason));
         var acts = el("div", "cw-acts");
-        [["Save", "save", {items: [p.number]}], ["Similar", "similar", {item: p.number}],
-         ["Buy", "buy", {item: p.number}]].forEach(function (a) {
+        [["Save", "save"], ["Similar", "similar"], ["Buy", "buy"]].forEach(function (a) {
+          a.push({product_id: p.product_id});          // the button acts on this card's product
           var b = el("button", null, a[0]);
           b.addEventListener("click", function () { action(a[1], a[2]); });
           acts.appendChild(b);

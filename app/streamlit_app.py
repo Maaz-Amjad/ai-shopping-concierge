@@ -180,9 +180,8 @@ with chat_tab:
                     if p.get("reason"):
                         c1.caption(md(p["reason"]))
                     last = i == len(st.session_state["chat_log"]) - 1          # buttons act on the latest list
-                    for col, label, name, args in ((c2, "Save", "save", {"items": [p["number"]]}),
-                                                   (c3, "Similar", "similar", {"item": p["number"]}),
-                                                   (c4, "Buy", "buy", {"item": p["number"]})):
+                    for col, label, name in ((c2, "Save", "save"), (c3, "Similar", "similar"), (c4, "Buy", "buy")):
+                        args = {"product_id": p["product_id"]}                  # this card's product
                         if col.button(label, key=f"{name}-{i}-{p['number']}", disabled=not last):
                             remember(run_action(name, args, st.session_state["chat_state"], res, n=n, link=link))
                             st.rerun()

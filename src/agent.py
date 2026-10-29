@@ -8,6 +8,7 @@ in Python, grounded answer with the validator); compare / similar / shortlist / 
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,6 +25,7 @@ PROMPT_VERSION = "agent-v2"     # v2: limits merged in Python (v1 let the LLM re
 MAX_HISTORY = 6          # turns kept in the prompt
 MAX_TEXT = 500           # characters per message kept in state
 MAX_SHORTLIST = 20
+MAX_EXCLUDES = 10        # "not X" terms kept
 LIMIT_FIELDS = ("max_price", "min_price", "category", "brand", "exclude_terms")
 FALLBACK_ASK = "Could you tell me a bit more about what you're looking for, for example the type of product or a budget?"
 
@@ -104,7 +106,14 @@ def clean_state(state: ChatState | dict | None, res: Resources) -> ChatState:
     shown = [p for p in s.shown if p in known][:20]
     shortlist = list(dict.fromkeys(p for p in s.shortlist if p in known))[:MAX_SHORTLIST]
     history = [(r, str(t)[:MAX_TEXT]) for r, t in s.history if r in ("shopper", "assistant")][-2 * MAX_HISTORY:]
-    return ChatState(limits=s.limits, shown=shown, shortlist=shortlist, history=history)
+    limits = None
+    if s.limits is not None:            # same catalog and price checks as parser output, then size caps
+        lim = s.limits
+        raw = ParsedQuery(semantic_query=lim.semantic_query[:MAX_TEXT], max_price=lim.max_price,
+                          min_price=lim.min_price, category=lim.category, brand=lim.brand,
+                          exclude_terms=[str(t)[:50] for t in lim.exclude_terms[-MAX_EXCLUDES:]])
+        limits = Limits(**validate(raw, raw.semantic_query or "x", res.meta)[0].model_dump())
+    return ChatState(limits=limits, shown=shown, shortlist=shortlist, history=history)
 
 
 def rows_of(ids: list[str], res: Resources) -> pd.DataFrame:
@@ -188,7 +197,10 @@ def do_search(args: dict, message: str, state: ChatState, res: Resources, user_i
     request = str(args.get("request") or message).strip()[:MAX_TEXT]
     raw = ParsedQuery(semantic_query=request, **merge_limits(args, state))
     parsed, log = validate(raw, request, res.meta)
-    out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True)
+    try:
+        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True)
+    except CallLimitReached:          # per-process cap: same products, answer from catalog fields
+        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True, llm=False)
     view = result_to_dict(request, out, res)
     extra = {p["product_id"]: {k: p[k] for k in ("reason", "s_sem", "s_pers", "s_pop", "final") if k in p}
              for p in view["products"]}
@@ -199,17 +211,37 @@ def do_search(args: dict, message: str, state: ChatState, res: Resources, user_i
                              ("cold_start", "price_excluded", "generation_fallback")}})
 
 
+def _str_list(value: Any) -> list[str]:
+    """A tool argument meant to be a list of strings; a single string is one item (open models send either)."""
+    if isinstance(value, str):
+        return [value]
+    return [str(v) for v in value if isinstance(v, (str, int, float))] if isinstance(value, list) else []
+
+
+def _price_arg(value: Any) -> float | None:
+    """A price from a tool argument: numbers or "$80"-style text; anything else is no limit."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        price = float(str(value).replace("$", "").replace(",", "").strip())
+    except ValueError:
+        return None
+    return price if math.isfinite(price) else None
+
+
 def merge_limits(args: dict, state: ChatState) -> dict:
     """Limits for this turn: earlier ones carry over (Python, not the LLM) unless the shopper removed them or started a
     new search; new values replace old ones; "not X" terms accumulate."""
     prev = Limits() if args.get("new_search") or state.limits is None else state.limits
-    removed = {str(f) for f in args.get("remove_limits") or []}
+    removed = set(_str_list(args.get("remove_limits")))
     merged: dict[str, Any] = {}
     for f in ("max_price", "min_price", "category", "brand"):
-        merged[f] = args[f] if args.get(f) is not None else (None if f in removed else getattr(prev, f))
-    new_terms = [str(t) for t in args.get("exclude_terms") or []]
+        value = _price_arg(args.get(f)) if f.endswith("price") else (
+            args.get(f) if isinstance(args.get(f), str) else None)
+        merged[f] = value if value is not None else (None if f in removed else getattr(prev, f))
+    new_terms = [t[:50] for t in _str_list(args.get("exclude_terms"))]
     kept = [] if "exclude_terms" in removed else prev.exclude_terms
-    merged["exclude_terms"] = list(dict.fromkeys(kept + new_terms))
+    merged["exclude_terms"] = list(dict.fromkeys(kept + new_terms))[-MAX_EXCLUDES:]
     return merged
 
 
@@ -234,7 +266,11 @@ def do_similar(args: dict, state: ChatState, res: Resources, n: int, link: str |
     ok, bad = _numbers(args.get("item"), len(state.shown))
     if not ok:
         return TurnResult("similar", _bad_numbers(bad, len(state.shown)) if bad else "Similar to which number?", state)
-    base = rows_of([state.shown[ok[0] - 1]], res).iloc[0]
+    return _similar(state.shown[ok[0] - 1], state, res, n, link)
+
+
+def _similar(product_id: str, state: ChatState, res: Resources, n: int, link: str | None) -> TurnResult:
+    base = rows_of([product_id], res).iloc[0]
     ids = get_similar(base["product_id"], res, n)["product_id"].tolist()
     state.shown = ids
     return TurnResult("similar", f"Products similar to “{str(base['title'])[:80]}”:", state, cards(ids, res, link))
@@ -244,7 +280,11 @@ def do_save(args: dict, state: ChatState, res: Resources) -> TurnResult:
     ok, bad = _numbers(args.get("items"), len(state.shown))
     if not ok:
         return TurnResult("save", _bad_numbers(bad, len(state.shown)) if bad else "Which numbers should I save?", state)
-    added = [state.shown[i - 1] for i in ok if state.shown[i - 1] not in state.shortlist]
+    return _save([state.shown[i - 1] for i in ok], state, res)
+
+
+def _save(ids: list[str], state: ChatState, res: Resources) -> TurnResult:
+    added = [p for p in dict.fromkeys(ids) if p not in state.shortlist]
     state.shortlist = (state.shortlist + added)[:MAX_SHORTLIST]
     titles = [f"“{str(t)[:60]}”" for t in rows_of(added, res)["title"]] if added else []
     text = (f"Saved {', '.join(titles)} to your shortlist." if titles else "Those are already on your shortlist.") + \
@@ -276,7 +316,11 @@ def do_buy(args: dict, state: ChatState, res: Resources, link: str | None) -> Tu
     if not ok:
         what = "your shortlist" if args.get("from_shortlist") else "the list"
         return TurnResult("buy", _bad_numbers(bad, len(source), what) if bad else "Which number would you like?", state)
-    row = rows_of([source[ok[0] - 1]], res).iloc[0]
+    return _buy(source[ok[0] - 1], state, res, link)
+
+
+def _buy(product_id: str, state: ChatState, res: Resources, link: str | None) -> TurnResult:
+    row = rows_of([product_id], res).iloc[0]
     url = link.format(id=row["product_id"]) if link else None
     title = str(row["title"])[:80]
     text = (f"Great choice: “{title}” ({_price(row['price'])}). Open its product page to buy it from the store; "
@@ -312,15 +356,38 @@ def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user
     except (ValueError, CallLimitReached, QuotaExhausted, Exception) as exc:  # noqa: BLE001 - degrade to search
         call, fallback = {"name": "search", "args": {"request": message}}, f"{type(exc).__name__}: {exc}"[:200]
     name, args = call["name"], call.get("args") or {}
+    if not isinstance(args, dict):
+        name, args, fallback = "search", {}, f"tool arguments are not an object: {str(args)[:100]}"
+    try:
+        result = _dispatch(name, args, message, state, res, user_id, n, link, plain=fallback is not None)
+    except (TypeError, ValueError) as exc:   # arguments a weaker model got wrong (ValidationError is a ValueError)
+        fallback = f"{type(exc).__name__}: {exc}"[:200]
+        result = _plain_search(message, clean_state(state, res), res, user_id, n, link)
+    result.flags.update(tool_args=args, fallback=fallback)
+    result.state.history = (result.state.history + [("shopper", message), ("assistant", result.text[:MAX_TEXT])])[
+        -2 * MAX_HISTORY:]
+    return result
+
+
+def _plain_search(message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
+                  link: str | None) -> TurnResult:
+    """No usable tool call: plain pipeline search of the message (limits parsed afresh)."""
+    out = search_products(message, res, user_id=user_id, n=n)
+    view = result_to_dict(message, out, res)
+    extra = {p["product_id"]: {k: p[k] for k in ("reason", "s_sem", "s_pers", "s_pop", "final") if k in p}
+             for p in view["products"]}
+    state.limits = Limits(**out.parsed_query.model_dump())
+    state.shown = out.ranked["product_id"].tolist()
+    return TurnResult("search", out.answer.text, state, cards(state.shown, res, link, extra),
+                      flags={k: view["flags"].get(k) for k in ("cold_start", "price_excluded", "generation_fallback")})
+
+
+def _dispatch(name: str, args: dict, message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
+              link: str | None, plain: bool) -> TurnResult:
+    """Run the action the LLM chose (`plain`: no usable tool call, so search the message as typed)."""
     if name == "search":
-        if fallback:      # no tool call: plain pipeline search of the message (limits parsed afresh)
-            out = search_products(message, res, user_id=user_id, n=n)
-            view = result_to_dict(message, out, res)
-            extra = {p["product_id"]: {k: p[k] for k in ("reason", "s_sem", "s_pers", "s_pop", "final")}
-                     for p in view["products"]}
-            state.limits = Limits(**out.parsed_query.model_dump())
-            state.shown = out.ranked["product_id"].tolist()
-            result = TurnResult("search", out.answer.text, state, cards(state.shown, res, link, extra))
+        if plain:
+            result = _plain_search(message, state, res, user_id, n, link)
         else:
             result = do_search(args, message, state, res, user_id, n, link)
     elif name == "compare":
@@ -337,16 +404,24 @@ def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user
         result = do_buy(args, state, res, link)
     else:
         result = do_ask(args, message, state, res)
-    result.flags.update(tool_args=args, fallback=fallback)
-    result.state.history = (result.state.history + [("shopper", message), ("assistant", result.text[:MAX_TEXT])])[
-        -2 * MAX_HISTORY:]
     return result
 
 
 def run_action(name: str, args: dict, state: ChatState | dict | None, res: Resources, n: int = 5,
                link: str | None = None) -> TurnResult:
-    """Run a button action (Save / Similar / Buy on a card) directly, without an LLM call."""
+    """Run a button action (Save / Similar / Buy on a card) directly, without an LLM call.
+
+    Card buttons send {"product_id": ...}, so they act on that card's product whichever list it came from;
+    {"item": number} / {"items": [...]} refer to the latest results (shortlist numbers for remove).
+    """
     state = clean_state(state, res)
+    product_id = args.get("product_id")
+    if product_id is not None and name in ("save", "similar", "buy"):
+        if not isinstance(product_id, str) or product_id not in set(res.catalog["product_id"]):
+            raise ValueError(f"unknown product {str(product_id)[:40]!r}")
+        return {"save": lambda: _save([product_id], state, res),
+                "similar": lambda: _similar(product_id, state, res, n, link),
+                "buy": lambda: _buy(product_id, state, res, link)}[name]()
     handlers = {"save": lambda: do_save(args, state, res), "similar": lambda: do_similar(args, state, res, n, link),
                 "buy": lambda: do_buy(args, state, res, link), "remove": lambda: do_remove(args, state, res, link),
                 "show_shortlist": lambda: do_show_shortlist(state, res, link)}
