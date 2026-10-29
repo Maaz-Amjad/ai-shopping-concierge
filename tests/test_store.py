@@ -293,3 +293,96 @@ def test_refresh_needs_a_source_it_can_read_again(tmp_path, monkeypatch):
     store.build_store_from_feed("shop", shop_feed, "shopify_json", model=FakeModel(), cfg=cfg, source="MyShop.com")
     store.refresh_store("shop", model=FakeModel(), cfg=cfg)
     assert calls == ["https://myshop.com/products.json"]              # a typed Shopify address is re-read
+
+
+
+# ---- verifier findings, Phase 13.2 ----------------------------------------------------------------------
+
+def test_shopify_stock_without_a_tracker_column_respects_quantity_and_policy(tmp_path):
+    csv = """Handle,Title,Variant Price,Variant Inventory Qty,Variant Inventory Policy
+gone,Gone Kettle,10,0,deny
+here,Here Kettle,10,4,deny
+"""
+    cat, _ = import_feed(read_feed(write(tmp_path, "s.csv", csv)), "shopify")
+    assert cat["in_stock"].tolist() == [False, True]
+
+
+def test_woocommerce_variations_that_name_their_parent_by_sku(tmp_path):
+    woo = """ID,SKU,Type,Parent,Name,Regular price,In stock?
+3,G-1,variable,,Grinder,,
+4,,variation,G-1,Grinder - red,30,0
+5,,variation,G-1,Grinder - blue,32,0
+"""
+    cat, _ = import_feed(read_feed(write(tmp_path, "w.csv", woo)), "woocommerce")
+    assert cat["in_stock"].tolist() == [False] and cat["price"].tolist() == [30.0]
+
+
+def test_odd_stock_words(tmp_path):
+    assert store.parse_stock("nan") is None
+    assert store.parse_stock("https://schema.org/OutOfStock") is False
+    assert store.parse_stock("http://schema.org/InStock") is True
+    assert store.parse_stock(-2) is False
+
+
+def test_refresh_of_a_shopify_address_typed_with_https_reads_products_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    calls, shop_feed = [], pd.DataFrame({"handle": ["a"], "title": ["Kettle"]})
+    monkeypatch.setattr(store, "read_feed", lambda src: calls.append(src) or shop_feed)
+    store.build_store_from_feed("shop", shop_feed, "shopify_json", model=FakeModel(), cfg=cfg,
+                                source="https://MyShop.com/collections/sale?x=1")
+    store.refresh_store("shop", model=FakeModel(), cfg=cfg)
+    assert calls == ["https://myshop.com/products.json"]
+
+
+def test_cli_file_sources_are_saved_as_absolute_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    monkeypatch.chdir(tmp_path)
+    pd.DataFrame({"product_id": ["a"], "title": ["Kettle"]}).to_csv("feed.csv", index=False)
+    log = store.build_store("demo", "feed.csv", "generic", model=FakeModel(),
+                            cfg={"seed": 42, "embedding": {"model": "fake", "batch_size": 8}})
+    assert log["source"] == str(tmp_path / "feed.csv")
+
+
+def test_failed_save_keeps_the_previous_store_intact(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    store.build_store_from_feed("demo", pd.DataFrame({"product_id": ["a", "b"], "title": ["Kettle", "Toaster"]}),
+                                "generic", model=FakeModel(), cfg=cfg, source="upload")
+    d = tmp_path / "stores" / "demo"
+    before = (np.load(d / "embeddings.npy"), np.load(d / "product_ids.npy"), pd.read_pickle(d / "catalog.pkl"))
+    real_replace = store.os.replace
+
+    def failing_replace(src, dst):
+        if str(dst).endswith("catalog.pkl"):
+            raise PermissionError("catalog in use")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(store.os, "replace", failing_replace)
+    with pytest.raises(PermissionError):
+        store.build_store_from_feed("demo", pd.DataFrame({"product_id": ["c"], "title": ["Scale"]}), "generic",
+                                    model=FakeModel(), cfg=cfg, source="upload")
+    assert np.array_equal(np.load(d / "embeddings.npy"), before[0])
+    assert np.load(d / "product_ids.npy").tolist() == before[1].tolist()
+    assert pd.read_pickle(d / "catalog.pkl")["product_id"].tolist() == ["a", "b"]
+
+
+def test_vectors_are_reused_only_when_the_log_names_the_same_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    feed = pd.DataFrame({"product_id": ["a"], "title": ["Kettle"]})
+    store.build_store_from_feed("demo", feed, "generic", model=FakeModel(), cfg=cfg, source="upload")
+    log_path = tmp_path / "stores" / "demo" / "import_log.json"
+    log = json.loads(log_path.read_text())
+    log.pop("embedding_model")                                       # an import from before Phase 13.2
+    log_path.write_text(json.dumps(log))
+    assert store.previous_vectors(tmp_path / "stores" / "demo", "fake") == ({}, {})
+    (tmp_path / "stores" / "demo" / "catalog.pkl").write_bytes(b"not a pickle")
+    assert store.previous_vectors(tmp_path / "stores" / "demo", "fake") == ({}, {})
+
+
+def test_cli_refresh_rejects_negative_interval_and_ignored_options(tmp_path, monkeypatch):
+    for argv in (["--name", "x", "--refresh", "--every", "-5"], ["--name", "x", "--refresh", "--file", "f.csv"]):
+        with pytest.raises(SystemExit) as exc:
+            store.main(argv)
+        assert exc.value.code == 2                                       # rejected by the argument parser

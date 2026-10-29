@@ -226,3 +226,11 @@ def test_saved_product_that_sold_out_says_so(tmp_path):
     assert "out of stock" in out.text and out.products[0]["in_stock"] is False
     shown = run_action("show_shortlist", {}, ChatState(shortlist=["A", "B"]), res, link=LINK)
     assert [p["in_stock"] for p in shown.products] == [False, True]
+
+
+
+def test_buy_notices_a_sold_out_product_when_every_stock_is_known(tmp_path):
+    res = agent_res(tmp_path, [], [])
+    res.catalog = res.catalog.assign(in_stock=[False, True, True])          # dtype bool -> numpy booleans
+    out = run_action("buy", {"product_id": "A"}, ChatState(shortlist=["A"]), res, link=LINK)
+    assert "out of stock" in out.text

@@ -153,3 +153,11 @@ def test_similar_products_skip_out_of_stock_items(tmp_path):
     res = resources(tmp_path, [])
     res.catalog = res.catalog.assign(in_stock=[True, False, None])
     assert get_similar("A", res, 2)["product_id"].tolist() == ["C"]
+
+
+
+def test_no_result_answer_says_when_matches_are_out_of_stock(tmp_path):
+    res = resources(tmp_path, [])
+    res.catalog = res.catalog.assign(in_stock=[False, False, True])
+    out = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"))
+    assert out.ranked.empty and "2 matching products are out of stock" in out.answer.text
