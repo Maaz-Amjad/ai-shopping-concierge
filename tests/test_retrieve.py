@@ -165,3 +165,19 @@ def test_hybrid_filter_first_blends_dense_and_keyword_scores_inside_the_mask():
     assert 2 not in mixed["row"].tolist()                      # hard filters still win
     s = hybrid_scores(np.array([0.9, 0.5, 0.7]), np.array([0.0, 4.0, 2.0]), 0.5)
     assert s.tolist() == pytest.approx([0.5, 0.5, 0.5])
+
+
+
+def test_hybrid_keeps_the_true_cosine_and_blends_the_unpriced_list():
+    from src.retrieve import DenseIndex
+
+    e = np.array([[1, 0], [0.8, 0.6], [0.6, 0.8]], dtype=np.float32)
+    cands = DenseIndex(e).hybrid_filter_first(np.array([1, 0], dtype=np.float32), np.array([0.0, 1.0, 5.0]),
+                                              np.ones(3, dtype=bool), 3, alpha=0.5)
+    assert dict(zip(cands["row"], cands["cosine"])) == pytest.approx({0: 1.0, 1: 0.8, 2: 0.6})
+    catalog = pd.DataFrame({"title": ["a", "b x9", "c"], "features": ["", "", ""], "category": ["X"] * 3,
+                            "brand": ["B"] * 3, "price": [np.nan, np.nan, 500.0]})
+    res = retrieve(ParsedQuery(semantic_query="x9", max_price=100), "filter_first", 10, catalog=catalog,
+                   index=DenseIndex(e), query_vec=np.array([1, 0], dtype=np.float32), n=5,
+                   lexical_scores=np.array([0.0, 9.0, 0.0]), alpha=1.0)
+    assert res.unpriced["row"].tolist()[0] == 1                          # keyword match first among unpriced

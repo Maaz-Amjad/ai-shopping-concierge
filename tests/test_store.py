@@ -590,3 +590,86 @@ def test_webhook_updates_older_than_the_stored_version_are_skipped(tmp_path, mon
     woo = store.woocommerce_webhook_feed({"id": 7, "sku": "K-7", "name": "Kettle", "status": "publish",
                                           "date_modified_gmt": "2026-10-30T12:00:00"})
     assert woo["date_modified_gmt"].iloc[0] == "2026-10-30T12:00:00"
+
+
+
+# ---- verifier findings: replay guard (13.4) ------------------------------------------------------------
+
+def guarded(tmp_path, monkeypatch):
+    cfg = webhook_store(tmp_path, monkeypatch)
+
+    def send(when, price="30.00", **extra):
+        product = {**SHOP_PRODUCT, "updated_at": when, **extra,
+                   "variants": [{**SHOP_PRODUCT["variants"][0], "price": price}]}
+        return store.apply_store_changes("shop", store.shopify_webhook_feed(product), preset="shopify_json",
+                                         model=FakeModel(), cfg=cfg)
+
+    def catalog():
+        return pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl").set_index("product_id")
+
+    return cfg, send, catalog
+
+
+def test_older_unpublish_does_not_remove_a_newer_live_product(tmp_path, monkeypatch):
+    cfg, send, catalog = guarded(tmp_path, monkeypatch)
+    send("2026-10-30T12:00:00Z")
+    send("2026-10-30T11:00:00Z", status="draft")                          # late retry of an older draft
+    assert "steel-kettle" in catalog().index
+
+
+def test_deleted_product_is_not_brought_back_by_an_older_update(tmp_path, monkeypatch):
+    cfg, send, catalog = guarded(tmp_path, monkeypatch)
+    send("2026-10-30T12:00:00Z")
+    store.apply_store_changes("shop", delete_ids=["101"], model=FakeModel(), cfg=cfg)
+    log = send("2026-10-30T12:00:00Z", price="31.00")                     # retried update from before the delete
+    assert "steel-kettle" not in catalog().index and log["stale"] == ["steel-kettle"]
+    send("2099-01-01T00:00:00Z", price="33.00")                            # edited after the delete: restored
+    assert catalog().loc["steel-kettle", "price"] == 33.0
+
+
+def test_second_edit_in_the_same_second_is_applied(tmp_path, monkeypatch):
+    cfg, send, catalog = guarded(tmp_path, monkeypatch)
+    send("2026-10-30T12:00:00Z", price="30.00")
+    send("2026-10-30T12:00:00Z", price="31.00")
+    assert catalog().loc["steel-kettle", "price"] == 31.0
+
+
+def test_payload_without_a_time_keeps_the_stored_time(tmp_path, monkeypatch):
+    cfg, send, catalog = guarded(tmp_path, monkeypatch)
+    send("2026-10-30T12:00:00Z", price="30.00")
+    product = {**SHOP_PRODUCT, "variants": [{**SHOP_PRODUCT["variants"][0], "price": "50.00"}]}
+    store.apply_store_changes("shop", store.shopify_webhook_feed(product), preset="shopify_json",
+                              model=FakeModel(), cfg=cfg)                 # no updated_at: applied, time kept
+    assert catalog().loc["steel-kettle", "price"] == 50.0
+    send("2026-10-30T11:00:00Z", price="1.00")
+    assert catalog().loc["steel-kettle", "price"] == 50.0
+
+
+def test_delete_after_a_stale_update_is_not_reported_as_stale_and_noop_updates_do_not_rewrite(tmp_path, monkeypatch):
+    cfg, send, catalog = guarded(tmp_path, monkeypatch)
+    send("2026-10-30T12:00:00Z")
+    before = (tmp_path / "stores" / "shop" / "catalog.pkl").stat().st_mtime_ns
+    assert send("2026-10-30T11:00:00Z")["stale"] == ["steel-kettle"]
+    assert (tmp_path / "stores" / "shop" / "catalog.pkl").stat().st_mtime_ns == before   # nothing written
+    log = store.apply_store_changes("shop", delete_ids=["102"], model=FakeModel(), cfg=cfg)
+    assert log["stale"] == [] and "glass-kettle" not in catalog().index
+
+
+def test_refresh_keeps_a_product_a_newer_webhook_updated(tmp_path, monkeypatch):
+    cfg, send, catalog = guarded(tmp_path, monkeypatch)
+    send("2026-10-30T12:00:00Z", price="30.00")
+    old_snapshot = pd.DataFrame([store.flatten_shopify({**SHOP_PRODUCT, "updated_at": "2026-10-30T10:00:00Z",
+                                                        "variants": [{"price": "20.00"}]}),
+                                 store.flatten_shopify({"id": 102, "handle": "glass-kettle", "title": "Glass Kettle",
+                                                        "variants": [{"price": "26.00"}]})])
+    store.build_store_from_feed("shop", old_snapshot, "shopify_json", model=FakeModel(), cfg=cfg, source="shop.com")
+    assert catalog().loc["steel-kettle", "price"] == 30.0 and catalog().loc["glass-kettle", "price"] == 26.0
+
+
+def test_products_without_platform_ids_do_not_share_timestamps():
+    cat = pd.DataFrame({"product_id": ["a", "b"], "source_id": [None, None],
+                        "source_updated_at": pd.to_datetime([None, "2026-10-30T12:00:00Z"], utc=True)})
+    new = pd.DataFrame({"product_id": ["c"], "source_id": [None],
+                        "source_updated_at": pd.to_datetime(["2026-10-30T11:00:00Z"], utc=True)})
+    kept, stale = store.drop_stale(new, cat)
+    assert stale == [] and kept["product_id"].tolist() == ["c"]

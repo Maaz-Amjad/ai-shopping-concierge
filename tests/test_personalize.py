@@ -189,3 +189,11 @@ def test_weights_with_limits_moves_part_of_the_personal_share_to_semantic():
 def test_with_limits_factor_is_kept_between_0_and_1():
     assert Weights(0.6, 0.25, 0.05, 0.1).with_limits(5) == Weights(0.6, 0.25, 0.05, 0.1)
     assert Weights(0.6, 0.25, 0.05).with_limits(-1).pers == 0.0
+
+
+
+def test_rank_reports_the_true_cosine_when_the_pool_has_one():
+    catalog, e = toy_catalog()
+    cands = pd.DataFrame({"row": [0, 1], "score": [1.0, 0.0], "cosine": [0.8, 0.9]})
+    out = rank(cands, None, Weights(0.7, 0.25, 0.05), catalog=catalog, embeddings=e).set_index("product_id")
+    assert out.loc["A", "cosine"] == 0.8 and out.loc["B", "cosine"] == 0.9
