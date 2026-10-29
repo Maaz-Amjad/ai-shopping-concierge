@@ -73,3 +73,9 @@ def test_cors_allows_only_configured_origins(tmp_path):
     assert ok.status_code == 200 and ok.headers["access-control-allow-origin"] == "https://shop.example"
     bad = c.options("/search", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"})
     assert "access-control-allow-origin" not in bad.headers
+
+
+def test_empty_store_parameter_means_the_default_catalog(client):
+    # Verifier 11b: the app's preview link for the demo store is /?store= (empty) and returned 400.
+    assert client.get("/", params={"store": ""}).status_code == 200
+    assert client.get("/meta", params={"store": ""}).json()["store"] == "benchmark"

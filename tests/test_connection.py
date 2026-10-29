@@ -27,3 +27,17 @@ def test_claude_desktop_settings_are_merged_and_backed_up(tmp_path):
     with pytest.raises(ValueError, match="not valid JSON"):
         connection.add_to_claude_desktop("mystore", path)
     assert path.read_text(encoding="utf-8") == "{not json"                      # left untouched
+
+
+def test_backup_keeps_the_original_settings_and_bad_shapes_are_refused(tmp_path):
+    # Verifier 11b: a second click overwrote the .bak with already-modified settings; [] crashed with AttributeError.
+    path = tmp_path / "claude_desktop_config.json"
+    path.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
+    backup = connection.add_to_claude_desktop("a", path)
+    connection.add_to_claude_desktop("b", path)
+    assert json.loads(backup.read_text(encoding="utf-8")) == {"theme": "dark"}     # still the original
+    for bad in ("[]", '{"mcpServers": null}'):
+        path.write_text(bad, encoding="utf-8")
+        with pytest.raises(ValueError):
+            connection.add_to_claude_desktop("a", path)
+        assert path.read_text(encoding="utf-8") == bad

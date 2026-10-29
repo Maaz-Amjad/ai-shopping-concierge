@@ -161,3 +161,14 @@ def test_format_detection_and_friendly_names(tmp_path):
     assert shopify_feed_url("https://mystore.com/collections/all") == "https://mystore.com/products.json"
     with pytest.raises(ValueError):
         shopify_feed_url("  ")
+
+
+def test_shopify_address_is_cleaned_and_local_addresses_refused():
+    # Verifier 11b: '?'/'#' leaked into the URL (then fetched as CSV) and local hosts were accepted.
+    from src.store import shopify_feed_url
+
+    assert shopify_feed_url("mystore.com?x=1#top") == "https://mystore.com/products.json"
+    assert shopify_feed_url("Shop.Example.com:443/") == "https://shop.example.com/products.json"
+    for bad in ("localhost:8000", "127.0.0.1", "169.254.169.254", "intranet", "[::1]"):
+        with pytest.raises(ValueError):
+            shopify_feed_url(bad)
