@@ -619,6 +619,41 @@ def run_judge_s6(cfg: dict, limit: int | None) -> None:
           f"cache hits: {client.cache_hits} | {client.model} calls today: {client.calls_today()}")
 
 
+def run_judge_extra(cfg: dict, limit: int | None) -> None:
+    """Judge the test top-10 pairs that the Phase 13 production rankings retrieve but nobody graded: rating weight
+    0.10 (new + experiment-A shoppers) and hybrid a = 0.5. Same judge and prompt; saved to judge_labels_extra.csv
+    (main qrels unchanged). --limit 0 only counts the pairs and today's judge calls."""
+    from src.data import load_catalog, load_interactions
+    from src.personalize import pick_users
+
+    queries = load_queries()
+    test = queries[queries["split"] == "test"]
+    users = [""] + pick_users(load_interactions(), n=8, min_interactions=10, seed=cfg["seed"])
+    r = cfg["ranking"]
+    rating, _ = run_s6(test, load_parsed(), cfg, users,
+                       weights_grid=[(round(r["w_sem"] - 0.1, 2), r["w_pers"], r["w_pop"], 0.1)], depth=10)
+    hybrid = hybrid_runs(cfg, test, alphas=(0.5,), depth=10)
+    tops = pd.concat([rating[rating["system"] != "S5"], hybrid])
+    qrels = load_qrels(completed=True)
+    judged = set(zip(qrels["query_id"], qrels["product_id"]))
+    pool = tops[[(q, p) not in judged for q, p in zip(tops["query_id"], tops["product_id"])]]
+    pool = pool[["query_id", "product_id"]].drop_duplicates().sort_values(["query_id", "product_id"])
+    client = judge_client(cfg, limit)
+    print(f"unjudged test pairs: {len(pool)} in {pool.query_id.nunique()} queries (about one judge call each) | "
+          f"{client.model} calls logged today: {client.calls_today()} (free tier: 20 a day, reset at midnight Pacific)")
+    if limit == 0 or pool.empty:
+        return
+    out, notes = judge_pool(pool.reset_index(drop=True), queries, load_catalog(), client)
+    path = RESULTS_DIR / EXTRA_LABELS
+    if path.exists():
+        out = pd.concat([pd.read_csv(path), out]).drop_duplicates(["query_id", "product_id"], keep="last")
+    out.to_csv(path, index=False)
+    for note in notes:
+        print("[judge]", note)
+    print(f"judged {len(out)} extra pairs in total | API calls this run: {client.calls_made} | "
+          f"cache hits: {client.cache_hits} | {client.model} calls today: {client.calls_today()}")
+
+
 def run_sensitivity(cfg: dict) -> pd.DataFrame:
     """Spec 8.4: weights stay fixed; report how DEV relevance and rank shift move over a small grid.
 
@@ -646,7 +681,22 @@ def run_sensitivity(cfg: dict) -> pd.DataFrame:
 RATING_GRID = (0.0, 0.05, 0.1, 0.15, 0.2)   # Phase 13.1, pre-registered; taken out of w_sem
 
 
-def run_rating(cfg: dict, split: str = "dev") -> pd.DataFrame:
+EXTRA_LABELS = "judge_labels_extra.csv"   # Phase 13 test pairs judged afterwards (main qrels stay unchanged)
+
+
+def load_qrels(completed: bool = False) -> pd.DataFrame:
+    """eval/qrels.csv, plus the extra Phase 13 judge labels when `completed` (pairs only new rankings retrieved)."""
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    extra = RESULTS_DIR / EXTRA_LABELS
+    if completed and extra.exists():
+        more = pd.read_csv(extra)[["query_id", "product_id", "grade"]].assign(source="judge_extra")
+        known = set(zip(qrels["query_id"], qrels["product_id"]))
+        more = more[[(q, p) not in known for q, p in zip(more["query_id"], more["product_id"])]]
+        qrels = pd.concat([qrels, more], ignore_index=True)
+    return qrels
+
+
+def run_rating(cfg: dict, split: str = "dev", completed: bool = False) -> pd.DataFrame:
     """Phase 13.1: the rating weight over RATING_GRID for new shoppers (cold start) and the 8 experiment-A users,
     judged-only NDCG@10 change vs S5 (same baseline for every weight). Choose on dev; report test once."""
     from src.data import load_interactions
@@ -658,7 +708,7 @@ def run_rating(cfg: dict, split: str = "dev") -> pd.DataFrame:
     r = cfg["ranking"]
     grid = [(round(r["w_sem"] - wr, 2), r["w_pers"], r["w_pop"], wr) for wr in RATING_GRID]
     runs, shift = run_s6(part, load_parsed(), cfg, users, weights_grid=grid, depth=CONDENSE_DEPTH)
-    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    qrels = load_qrels(completed)
     a = experiment_a(runs, shift, qrels[qrels["query_id"].isin(part["query_id"])])
     a["shopper"] = np.where(a["user_id"] == "", "new", "returning")
     a["w_rat"] = [float(lbl.split(",")[3]) if lbl.count(",") == 3 else 0.0 for lbl in a["weights"]]
@@ -673,7 +723,7 @@ def run_rating(cfg: dict, split: str = "dev") -> pd.DataFrame:
         mean, lo, hi = paired_bootstrap(base.tolist(), cur.reindex(base.index).tolist())
         diffs.append((mean, lo, hi))
     out[["vs_w0", "vs_w0_lo", "vs_w0_hi"]] = diffs
-    out.to_csv(RESULTS_DIR / f"rating_weight_{split}.csv", index=False)
+    out.to_csv(RESULTS_DIR / f"rating_weight_{split}{'_completed' if completed else ''}.csv", index=False)
     print(f"{split} queries {len(part)}, new shopper + {len(users) - 1} returning; mean over (shopper, query):")
     print(out.round(4).to_string(index=False))
     return out
@@ -732,15 +782,12 @@ def run_adaptive(cfg: dict, split: str = "dev") -> pd.DataFrame:
 HYBRID_GRID = (0.0, 0.1, 0.2, 0.3, 0.5)   # Phase 13.5, pre-registered: BM25 share of the retrieval score
 
 
-def run_hybrid(cfg: dict, split: str = "dev") -> pd.DataFrame:
-    """Phase 13.5: S5 (filter-first, no exclusions, cosine order) with dense and BM25 scores blended at each alpha.
-    Judged-only and plain NDCG@10 per alpha, paired with alpha = 0 (= S5) over queries."""
+def hybrid_runs(cfg: dict, part: pd.DataFrame, alphas=None, depth: int = CONDENSE_DEPTH) -> pd.DataFrame:
+    """Filter-first runs (no exclusions, cosine order) with dense and BM25 blended at each alpha."""
     from src.data import load_catalog
     from src.embed import encode_query, load_embeddings, load_model, use_query_instruction
     from src.retrieve import BM25Retriever, DenseIndex, retrieve, tokenize
 
-    queries = load_queries()
-    part = queries[queries["split"] == split]
     p_by_id = load_parsed().set_index("query_id")
     catalog = load_catalog()
     embeddings, _ = load_embeddings()
@@ -751,14 +798,22 @@ def run_hybrid(cfg: dict, split: str = "dev") -> pd.DataFrame:
         pq = to_parsed_query(p_by_id.loc[q["query_id"]])
         qvec = encode_query(pq.semantic_query, model, use_instruction=prefix)
         lexical = bm25.bm25.get_scores(tokenize(pq.semantic_query))
-        for a in HYBRID_GRID:
+        for a in alphas or HYBRID_GRID:
             res = retrieve(pq, "filter_first", r["pool_size"], catalog=catalog, index=index, query_vec=qvec,
-                           n=CONDENSE_DEPTH, use_exclusions=False, lexical_scores=lexical, alpha=a)
-            for c in res.candidates.head(CONDENSE_DEPTH).itertuples(index=False):
+                           n=depth, use_exclusions=False, lexical_scores=lexical, alpha=a)
+            for c in res.candidates.head(depth).itertuples(index=False):
                 rows.append({"query_id": q["query_id"], "system": f"S5h|{a:g}", "rank": int(c.rank),
                              "product_id": catalog["product_id"].iat[int(c.row)], "score": float(c.score)})
-    runs = pd.DataFrame(rows)
-    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    return pd.DataFrame(rows)
+
+
+def run_hybrid(cfg: dict, split: str = "dev", completed: bool = False) -> pd.DataFrame:
+    """Phase 13.5: S5 (filter-first, no exclusions, cosine order) with dense and BM25 scores blended at each alpha.
+    Judged-only and plain NDCG@10 per alpha, paired with alpha = 0 (= S5) over queries."""
+    queries = load_queries()
+    part = queries[queries["split"] == split]
+    runs = hybrid_runs(cfg, part)
+    qrels = load_qrels(completed)
     qrels = qrels[qrels["query_id"].isin(part["query_id"])]
     plain = ranking_metrics(runs, qrels, ks=(10,)).set_index(["system", "query_id"])["NDCG@10"]
     judged = ranking_metrics(judged_only(runs, qrels), qrels, ks=(10,)).set_index(["system", "query_id"])["NDCG@10"]
@@ -777,7 +832,7 @@ def run_hybrid(cfg: dict, split: str = "dev") -> pd.DataFrame:
     exact = part[part["stratum"] == "exact_term"]["query_id"].tolist()
     for qid in exact:
         out[f"{qid}_judged_only"] = [judged.get((f"S5h|{a:g}", qid), np.nan) for a in HYBRID_GRID]
-    out.to_csv(RESULTS_DIR / f"hybrid_{split}.csv", index=False)
+    out.to_csv(RESULTS_DIR / f"hybrid_{split}{'_completed' if completed else ''}.csv", index=False)
     print(f"{split}: {len(part)} queries (exact-term: {', '.join(exact) or 'none'}):")
     print(out.round(4).to_string(index=False))
     return out
@@ -1014,12 +1069,14 @@ def run_report(cfg: dict, split: str = "test") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "report"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "judge-extra", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
                         help="split whose adherence and parse F1 are printed (tune on dev, report test)")
     parser.add_argument("--limit", type=int, default=None, help="judge: max real API calls (dry-run budget)")
+    parser.add_argument("--completed", action="store_true",
+                        help="rating/hybrid: score with the extra Phase 13 judge labels added")
     args = parser.parse_args(argv)
 
     cfg = load_config()
@@ -1039,13 +1096,16 @@ def main(argv: list[str] | None = None) -> None:
         run_sensitivity(cfg)
         return
     if args.action == "rating":
-        run_rating(cfg, args.split)
+        run_rating(cfg, args.split, args.completed)
+        return
+    if args.action == "judge-extra":
+        run_judge_extra(cfg, args.limit)
         return
     if args.action == "adaptive":
         run_adaptive(cfg, args.split)
         return
     if args.action == "hybrid":
-        run_hybrid(cfg, args.split)
+        run_hybrid(cfg, args.split, args.completed)
         return
     if args.action == "prefix":
         run_prefix(cfg)

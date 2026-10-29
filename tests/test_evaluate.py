@@ -242,3 +242,18 @@ def test_adaptive_rows_use_g_only_for_queries_with_limits():
     rows = adaptive_rows(a, {"q1"}, "g", "base")
     assert rows.sort_values("query_id")["delta_NDCG@10_judged_only"].tolist() == [0.2, 0.3]
     assert rows["unjudged@10"].mean() == 0.25
+
+
+def test_completed_qrels_add_extra_labels_without_overriding_main(tmp_path, monkeypatch):
+    from src import evaluate
+
+    (tmp_path / "eval").mkdir()
+    pd.DataFrame({"query_id": ["q1"], "product_id": ["A"], "grade": [2], "source": ["judge"]}).to_csv(
+        tmp_path / "eval" / "qrels.csv", index=False)
+    pd.DataFrame({"query_id": ["q1", "q1"], "product_id": ["A", "B"], "grade": [0, 1]}).to_csv(
+        tmp_path / evaluate.EXTRA_LABELS, index=False)
+    monkeypatch.setattr(evaluate, "ROOT", tmp_path)
+    monkeypatch.setattr(evaluate, "RESULTS_DIR", tmp_path)
+    assert len(evaluate.load_qrels()) == 1
+    both = evaluate.load_qrels(completed=True).set_index("product_id")["grade"].to_dict()
+    assert both == {"A": 2, "B": 1}                                   # main label wins for A
