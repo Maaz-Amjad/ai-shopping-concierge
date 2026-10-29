@@ -145,3 +145,23 @@ def test_retrieve_rejects_unknown_mode():
     with pytest.raises(ValueError):
         retrieve(ParsedQuery(semantic_query="x"), "magic", 5, catalog=small_catalog(),
                  index=DenseIndex(unit_rows(40)), query_vec=unit_rows(1)[0])
+
+
+# ---- Phase 13.5: hybrid keyword + semantic ----------------------------------------------------------------
+
+def test_hybrid_filter_first_blends_dense_and_keyword_scores_inside_the_mask():
+    from src.retrieve import DenseIndex, hybrid_scores
+
+    e = np.array([[1, 0], [0.8, 0.6], [0, 1], [0.9, 0.1]], dtype=np.float32)
+    index = DenseIndex(e)
+    q = np.array([1, 0], dtype=np.float32)
+    lexical = np.array([0.0, 5.0, 9.0, 1.0])                 # keyword match prefers row 2 (masked out below)
+    mask = np.array([True, True, False, True])
+    dense = index.filter_first(q, mask, 3)
+    assert dense["row"].tolist() == [0, 3, 1]
+    assert index.hybrid_filter_first(q, lexical, mask, 3, alpha=0.0)["row"].tolist() == [0, 3, 1]
+    assert index.hybrid_filter_first(q, lexical, mask, 3, alpha=1.0)["row"].tolist() == [1, 3, 0]
+    mixed = index.hybrid_filter_first(q, lexical, mask, 3, alpha=0.5)
+    assert 2 not in mixed["row"].tolist()                      # hard filters still win
+    s = hybrid_scores(np.array([0.9, 0.5, 0.7]), np.array([0.0, 4.0, 2.0]), 0.5)
+    assert s.tolist() == pytest.approx([0.5, 0.5, 0.5])

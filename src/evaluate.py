@@ -729,6 +729,60 @@ def run_adaptive(cfg: dict, split: str = "dev") -> pd.DataFrame:
     return out
 
 
+HYBRID_GRID = (0.0, 0.1, 0.2, 0.3, 0.5)   # Phase 13.5, pre-registered: BM25 share of the retrieval score
+
+
+def run_hybrid(cfg: dict, split: str = "dev") -> pd.DataFrame:
+    """Phase 13.5: S5 (filter-first, no exclusions, cosine order) with dense and BM25 scores blended at each alpha.
+    Judged-only and plain NDCG@10 per alpha, paired with alpha = 0 (= S5) over queries."""
+    from src.data import load_catalog
+    from src.embed import encode_query, load_embeddings, load_model, use_query_instruction
+    from src.retrieve import BM25Retriever, DenseIndex, retrieve, tokenize
+
+    queries = load_queries()
+    part = queries[queries["split"] == split]
+    p_by_id = load_parsed().set_index("query_id")
+    catalog = load_catalog()
+    embeddings, _ = load_embeddings()
+    index, bm25 = DenseIndex(embeddings), BM25Retriever(catalog["product_text"].tolist())
+    model, prefix, r = load_model(cfg["embedding"]["model"]), use_query_instruction(cfg), cfg["retrieval"]
+    rows = []
+    for _, q in part.iterrows():
+        pq = to_parsed_query(p_by_id.loc[q["query_id"]])
+        qvec = encode_query(pq.semantic_query, model, use_instruction=prefix)
+        lexical = bm25.bm25.get_scores(tokenize(pq.semantic_query))
+        for a in HYBRID_GRID:
+            res = retrieve(pq, "filter_first", r["pool_size"], catalog=catalog, index=index, query_vec=qvec,
+                           n=CONDENSE_DEPTH, use_exclusions=False, lexical_scores=lexical, alpha=a)
+            for c in res.candidates.head(CONDENSE_DEPTH).itertuples(index=False):
+                rows.append({"query_id": q["query_id"], "system": f"S5h|{a:g}", "rank": int(c.rank),
+                             "product_id": catalog["product_id"].iat[int(c.row)], "score": float(c.score)})
+    runs = pd.DataFrame(rows)
+    qrels = pd.read_csv(ROOT / "eval" / "qrels.csv")
+    qrels = qrels[qrels["query_id"].isin(part["query_id"])]
+    plain = ranking_metrics(runs, qrels, ks=(10,)).set_index(["system", "query_id"])["NDCG@10"]
+    judged = ranking_metrics(judged_only(runs, qrels), qrels, ks=(10,)).set_index(["system", "query_id"])["NDCG@10"]
+    unjudged = unjudged_share(runs, qrels)
+    base_j, base_p = judged.loc["S5h|0"], plain.loc["S5h|0"]
+    out = []
+    for a in HYBRID_GRID:
+        label = f"S5h|{a:g}"
+        j, p = judged.loc[label], plain.loc[label]
+        mean, lo, hi = paired_bootstrap(base_j.tolist(), j.reindex(base_j.index).tolist())
+        out.append({"alpha": a, "queries": len(j), "ndcg10_judged_only": j.mean(), "ndcg10": p.mean(),
+                    "vs_s5": mean, "vs_s5_lo": lo, "vs_s5_hi": hi,
+                    "vs_s5_plain": paired_bootstrap(base_p.tolist(), p.reindex(base_p.index).tolist())[0],
+                    "unjudged@10": float(unjudged.get(label, np.nan))})
+    out = pd.DataFrame(out)
+    exact = part[part["stratum"] == "exact_term"]["query_id"].tolist()
+    for qid in exact:
+        out[f"{qid}_judged_only"] = [judged.get((f"S5h|{a:g}", qid), np.nan) for a in HYBRID_GRID]
+    out.to_csv(RESULTS_DIR / f"hybrid_{split}.csv", index=False)
+    print(f"{split}: {len(part)} queries (exact-term: {', '.join(exact) or 'none'}):")
+    print(out.round(4).to_string(index=False))
+    return out
+
+
 def run_qrels() -> None:
     """Agreement on the verified sample, then eval/qrels.csv (human grade wins).
 
@@ -960,7 +1014,7 @@ def run_report(cfg: dict, split: str = "test") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "report"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -989,6 +1043,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "adaptive":
         run_adaptive(cfg, args.split)
+        return
+    if args.action == "hybrid":
+        run_hybrid(cfg, args.split)
         return
     if args.action == "prefix":
         run_prefix(cfg)

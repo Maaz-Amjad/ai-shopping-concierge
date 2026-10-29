@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 268 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 270 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -344,6 +344,27 @@ CSV is resolved against the live store when its address is known, and a lock fil
 and the app from writing a store at the same time. Webhooks are paired with the scheduled refresh (daily is enough),
 because a missed or out-of-order delivery is only corrected by the next full read. A key placed in a public web page
 is visible to anyone, so for the browser widget the rate limit and the origin allow-list remain the real protection.
+
+### 12.5 Hybrid keyword and semantic retrieval
+
+Appliance shoppers often type part or model numbers, where keyword matching beats embeddings (BM25 reached 0.51
+NDCG@10 against TF-IDF's 0.40 in section 6.1). Inside the same hard-filter mask, retrieval now blends the two:
+(1 − a) × dense cosine + a × BM25, each min-max normalized over the allowed products, so a = 0 is exactly S5. The grid
+{0, 0.1, 0.2, 0.3, 0.5} and the rule (best dev judged-only NDCG@10, ties to the smaller a) were fixed first; dev chose
+**a = 0.5**.
+
+| a = 0.5 vs S5 (no personalization) | Judged-only NDCG@10 change [95% CI] | Plain NDCG@10 change | Unjudged in top 10 | Part-number query |
+|---|---|---|---|---|
+| Dev (10 queries, used to choose) | +0.050 [−0.096, +0.267] | −0.085 | 22 % | q21: 0.94 → 0.96 |
+| Test (15 queries, run once) | +0.044 [−0.010, +0.109] | −0.025 | 12 % | q22: 0.60 → 1.00 |
+
+On products that have relevance labels, hybrid retrieval ranks better on both splits, and the part-number query on
+test becomes perfect; the interval still includes zero, so the gain is indicative. Counting unlabelled products as not
+relevant gives a small loss instead, because keyword matching brings in products no earlier system retrieved (12 % of
+the test top 10). The two readings bracket the truth; judging those products with the LLM judge would settle it. The
+chosen a sits at the edge of the grid, so a larger value was not tried. BM25 adds about 12 ms per query (p95 29 ms) and
+1.3 s to load a 10,000-product store. The app, API, chat and MCP server use a = 0.5 (`app.retrieval`); every
+benchmark table above keeps pure dense retrieval. Reproduce with `python -m src.evaluate hybrid --split dev|test`.
 
 ## 13. Future work
 

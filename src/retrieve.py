@@ -32,6 +32,17 @@ def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 
+def _minmax(x: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float64)
+    span = x.max() - x.min() if len(x) else 0.0
+    return (x - x.min()) / span if span > 0 else np.zeros_like(x)
+
+
+def hybrid_scores(dense: np.ndarray, lexical: np.ndarray, alpha: float) -> np.ndarray:
+    """Phase 13.5: (1 - alpha) * minmax(dense cosine) + alpha * minmax(BM25), over the same products."""
+    return (1 - alpha) * _minmax(dense) + alpha * _minmax(lexical)
+
+
 def top_k(scores: np.ndarray, k: int, rows: np.ndarray | None = None) -> pd.DataFrame:
     """Rank `scores` (aligned with `rows`, default 0..n-1) descending; ties by row index."""
     rows = np.arange(len(scores)) if rows is None else rows
@@ -97,6 +108,13 @@ class DenseIndex:
         scores = (self.embeddings[rows] @ query_vec).astype(np.float64)
         return top_k(scores, k, rows)
 
+    def hybrid_filter_first(self, query_vec: np.ndarray, lexical_scores: np.ndarray, mask: np.ndarray, k: int,
+                            alpha: float) -> pd.DataFrame:
+        """Phase 13.5: filter-first with dense and keyword (BM25) scores blended over the allowed products only."""
+        rows = np.flatnonzero(mask)
+        dense = (self.embeddings[rows] @ query_vec).astype(np.float64)
+        return top_k(hybrid_scores(dense, np.asarray(lexical_scores, dtype=np.float64)[rows], alpha), k, rows)
+
     def post_filter(self, query_vec: np.ndarray, mask: np.ndarray, n: int,
                     k0: int = 100, k_max: int = 1000) -> tuple[pd.DataFrame, int]:
         """S4 (proposal design): retrieve K, keep rows passing `mask`; double K until >= n survive or K hits k_max.
@@ -126,12 +144,14 @@ class RetrievalResult:
 
 def retrieve(pq: ParsedQuery, mode: str, pool_size: int, *, catalog: pd.DataFrame, index: DenseIndex,
              query_vec: np.ndarray, n: int = 5, k0: int = 100, k_max: int = 1000,
-             use_exclusions: bool = True) -> RetrievalResult:
+             use_exclusions: bool = True, lexical_scores: np.ndarray | None = None,
+             alpha: float = 0.0) -> RetrievalResult:
     """Retrieve candidates for a parsed query (spec 11).
 
     mode: "dense" (S3, filters ignored), "post_filter" (S4), "filter_first" (S5).
     `query_vec` must encode the text that mode uses (raw query for S3, pq.semantic_query otherwise).
     The unpriced fallback list is filled only when a price filter leaves fewer than `n` candidates.
+    filter_first with alpha > 0 and BM25 `lexical_scores` (one per catalog row) blends keyword matching in (13.5).
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
@@ -146,6 +166,8 @@ def retrieve(pq: ParsedQuery, mode: str, pool_size: int, *, catalog: pd.DataFram
     elif mode == "post_filter":
         cands, k_used = index.post_filter(query_vec, mask, n=n, k0=k0, k_max=k_max)
         cands = cands.head(pool_size)
+    elif alpha > 0 and lexical_scores is not None:
+        cands = index.hybrid_filter_first(query_vec, lexical_scores, mask, pool_size, alpha)
     else:
         cands = index.filter_first(query_vec, mask, pool_size)
     unpriced = pd.DataFrame(columns=["row", "score", "rank"])

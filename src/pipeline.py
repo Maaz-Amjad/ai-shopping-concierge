@@ -16,7 +16,7 @@ from src.generate import (MAX_WORDS, GenerationResult, answer_text, generate_ans
 from src.llm import CallLimitReached, LLMClient, provider_settings
 from src.parse import CatalogMeta, ParsedQuery, parse_query, validate
 from src.personalize import Weights, build_profiles, rank
-from src.retrieve import DenseIndex, retrieve
+from src.retrieve import BM25Retriever, DenseIndex, retrieve, tokenize
 
 
 @dataclass
@@ -32,6 +32,7 @@ class Resources:
     profiles: dict[str, np.ndarray]
     client: LLMClient
     brands: list[str]
+    bm25: Any = None                    # keyword index, only when retrieval.hybrid_alpha > 0 (Phase 13.5)
 
 
 def load_resources(cfg: dict | None = None, max_calls: int | None = None, store: str | None = None) -> Resources:
@@ -60,8 +61,9 @@ def load_resources(cfg: dict | None = None, max_calls: int | None = None, store:
                        max_calls=max_calls)
     brands = sorted(catalog["brand"].dropna().astype(str).unique().tolist())
     profiles = {} if store is not None else build_profiles(load_interactions(), catalog, embeddings)
+    bm25 = BM25Retriever(catalog["product_text"].tolist()) if cfg.get("retrieval", {}).get("hybrid_alpha") else None
     return Resources(cfg, catalog, embeddings, DenseIndex(embeddings), load_model(cfg["embedding"]["model"]),
-                     CatalogMeta.from_catalog(catalog), profiles, client, brands)
+                     CatalogMeta.from_catalog(catalog), profiles, client, brands, bm25)
 
 
 @dataclass
@@ -99,8 +101,11 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     t = time.perf_counter()
     qvec = encode_query(parsed.semantic_query, res.model, use_instruction=use_query_instruction(cfg))
     r = cfg["retrieval"]
+    alpha = float(r.get("hybrid_alpha") or 0.0)
+    lexical = res.bm25.bm25.get_scores(tokenize(parsed.semantic_query)) if alpha > 0 and res.bm25 else None
     result = retrieve(parsed, "filter_first", r["pool_size"], catalog=res.catalog, index=res.index, query_vec=qvec,
-                      n=n, k0=r["k0"], k_max=r["k_max"], use_exclusions=use_exclusions)
+                      n=n, k0=r["k0"], k_max=r["k_max"], use_exclusions=use_exclusions, lexical_scores=lexical,
+                      alpha=alpha)
     timings["retrieve"] = (time.perf_counter() - t) * 1000
 
     t = time.perf_counter()
@@ -152,7 +157,9 @@ def product_fields(catalog: pd.DataFrame) -> list[str]:
 def app_config(cfg: dict) -> dict:
     """Config for the demo app, API and MCP server: the production ranking weights (app.ranking, with the rating
     term) replace the evaluated spec weights, which the benchmark and experiments keep using."""
-    return {**cfg, "ranking": cfg.get("app", {}).get("ranking", cfg["ranking"])}
+    app = cfg.get("app", {})
+    return {**cfg, "ranking": app.get("ranking", cfg["ranking"]),
+            "retrieval": {**cfg.get("retrieval", {}), **(app.get("retrieval") or {})}}
 
 
 def search_products(query: str, res: Resources, *, max_price: float | None = None, min_price: float | None = None,

@@ -174,3 +174,16 @@ def test_personal_weight_shrinks_only_for_returning_shoppers_with_stated_limits(
     free = respond("ice maker", res, user_id="u_lg", parsed=open_query).ranked.set_index("product_id")
     assert free.loc["B", "final"] == pytest.approx(0.25 * free.loc["B", "s_pers"] + 0.7 * free.loc["B", "s_sem"]
                                                    + 0.05 * free.loc["B", "s_pop"])     # no limits: base weights
+
+
+def test_respond_uses_hybrid_retrieval_when_configured(tmp_path):
+    from src.pipeline import app_config
+    from src.retrieve import BM25Retriever
+
+    res = resources(tmp_path, [gen(["B", "A"])])
+    res.bm25 = BM25Retriever(["ice maker a", "ice maker b steel model x200", "hood c"])
+    res.cfg = {**CFG, "retrieval": {**CFG["retrieval"], "hybrid_alpha": 1.0}}
+    out = respond("x200 ice maker", res, parsed=ParsedQuery(semantic_query="x200 ice maker", category="Ice Makers"))
+    assert out.ranked["product_id"].tolist()[0] == "B"             # keyword match first (dense prefers A)
+    cfg = {"ranking": {}, "retrieval": {"pool_size": 5}, "app": {"retrieval": {"hybrid_alpha": 0.2}}}
+    assert app_config(cfg)["retrieval"] == {"pool_size": 5, "hybrid_alpha": 0.2}
