@@ -301,3 +301,23 @@ def test_stale_webhook_is_reported(shop_app, monkeypatch):
     r = client.post("/webhooks/shop/shopify", content=body,
                     headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update"})
     assert r.status_code == 200 and r.json()["status"] == "stale"
+
+
+def test_search_and_chat_stream_products_first_then_the_answer(tmp_path):
+    from test_agent import agent_res
+
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    res = agent_res(tmp_path, [{"name": "search", "args": {"request": "ice maker", "category": "Ice Makers"}}],
+                    [parsed, gen(["A", "B"]), gen(["A", "B"])])
+    client = TestClient(create_app(lambda s: res))
+    lines = [json.loads(x) for x in client.post("/search/stream", json={"query": "ice maker"}).text.splitlines()]
+    assert [e["type"] for e in lines] == ["products", "answer"]
+    assert [p["product_id"] for p in lines[0]["products"]] == ["A", "B"] and lines[1]["answer"]
+    chat = [json.loads(x) for x in client.post("/chat/stream", json={"message": "ice maker"}).text.splitlines()]
+    assert [e["type"] for e in chat] == ["products", "turn"] and chat[1]["state"]["shown"] == ["A", "B"]
+    assert chat[0]["products"][0]["number"] == 1
+
+
+def test_widget_reads_the_streams(client):
+    js = client.get("/widget.js").text
+    assert "/chat/stream" in js and "/search/stream" in js and "getReader" in js

@@ -35,6 +35,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
 | 13.3 Smaller personal weight for requests with limits | done, kept off: dev chose no change, test disagreed (report 12.3) |
 | 13.4 API hardening, store webhooks, Dockerfile | done: rate limits, optional API keys, request log, signed Shopify/WooCommerce webhooks |
+| 13.6 Faster replies: products first, answer when validated | done: `/search/stream`, `/chat/stream`; the widget shows products before the summary |
 | 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.044 [-0.010, +0.109] on judged products but -0.025 counting the 12% unjudged as irrelevant; part-number query 0.60 -> 1.00; used by the app |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
@@ -116,7 +117,8 @@ and the API reloads a store as soon as it changes.
 Optional rating columns (`rating`/`average_rating` and `rating_count`/`review_count`, or `--map rating=...`) are
 read when present and shown as stars; a store without any ratings ranks exactly as with the spec weights. Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
 (`product_id,title,brand,category,price,description,features`). API: `POST /search`, `POST /chat` (one chat turn; the
-client sends back the returned state), `POST /chat/action` (card buttons, no LLM call), `GET /similar/{id}`,
+client sends back the returned state), `POST /search/stream` and `POST /chat/stream` (the same, as newline-delimited
+JSON: the ranked products first, the validated answer when ready), `POST /chat/action` (card buttons, no LLM call), `GET /similar/{id}`,
 `GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in
 `stores/` (not committed); their shoppers have no history, so personalization is off for them. Browsers may call the
 API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIERGE_ALLOWED_ORIGINS`

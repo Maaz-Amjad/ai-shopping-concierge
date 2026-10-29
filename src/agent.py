@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -202,14 +202,16 @@ def _bad_numbers(bad: list[int], size: int, what: str = "the list") -> str:
 
 
 def do_search(args: dict, message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
-              link: str | None) -> TurnResult:
+              link: str | None, on_products: Callable[[list[dict]], None] | None = None) -> TurnResult:
     request = str(args.get("request") or message).strip()[:MAX_TEXT]
     raw = ParsedQuery(semantic_query=request, **merge_limits(args, state))
     parsed, log = validate(raw, request, res.meta)
+    early = _early(on_products, res, link)
     try:
-        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True)
+        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True, on_products=early)
     except CallLimitReached:          # per-process cap: same products, answer from catalog fields
-        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True, llm=False)
+        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True, llm=False,
+                      on_products=early)
     view = result_to_dict(request, out, res)
     extra = {p["product_id"]: {k: p[k] for k in ("reason", "s_sem", "s_pers", "s_pop", "final") if k in p}
              for p in view["products"]}
@@ -236,6 +238,13 @@ def _price_arg(value: Any) -> float | None:
     except ValueError:
         return None
     return price if math.isfinite(price) else None
+
+
+def _early(on_products: Callable[[list[dict]], None] | None, res: Resources, link: str | None):
+    """Turn the pipeline's early product view into numbered chat cards (Phase 13.6)."""
+    if on_products is None:
+        return None
+    return lambda view: on_products(cards([p["product_id"] for p in view["products"]], res, link))
 
 
 def merge_limits(args: dict, state: ChatState) -> dict:
@@ -359,7 +368,8 @@ def do_ask(args: dict, message: str, state: ChatState, res: Resources) -> TurnRe
 # ---- one turn ----------------------------------------------------------------------------------------
 
 def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user_id: str | None = None,
-              n: int = 5, link: str | None = None) -> TurnResult:
+              n: int = 5, link: str | None = None,
+              on_products: Callable[[list[dict]], None] | None = None) -> TurnResult:
     """Answer one shopper message. `link` is the product-page pattern for buy (store.link_template)."""
     message = str(message or "").strip()[:MAX_TEXT]
     state = clean_state(state, res)
@@ -374,10 +384,11 @@ def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user
     if not isinstance(args, dict):
         name, args, fallback = "search", {}, f"tool arguments are not an object: {str(args)[:100]}"
     try:
-        result = _dispatch(name, args, message, state, res, user_id, n, link, plain=fallback is not None)
+        result = _dispatch(name, args, message, state, res, user_id, n, link, plain=fallback is not None,
+                           on_products=on_products)
     except (TypeError, ValueError) as exc:   # arguments a weaker model got wrong (ValidationError is a ValueError)
         fallback = f"{type(exc).__name__}: {exc}"[:200]
-        result = _plain_search(message, clean_state(state, res), res, user_id, n, link)
+        result = _plain_search(message, clean_state(state, res), res, user_id, n, link, on_products)
     result.flags.update(tool_args=args, fallback=fallback)
     result.state.history = (result.state.history + [("shopper", message), ("assistant", result.text[:MAX_TEXT])])[
         -2 * MAX_HISTORY:]
@@ -385,9 +396,9 @@ def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user
 
 
 def _plain_search(message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
-                  link: str | None) -> TurnResult:
+                  link: str | None, on_products: Callable[[list[dict]], None] | None = None) -> TurnResult:
     """No usable tool call: plain pipeline search of the message (limits parsed afresh)."""
-    out = search_products(message, res, user_id=user_id, n=n)
+    out = search_products(message, res, user_id=user_id, n=n, on_products=_early(on_products, res, link))
     view = result_to_dict(message, out, res)
     extra = {p["product_id"]: {k: p[k] for k in ("reason", "s_sem", "s_pers", "s_pop", "final") if k in p}
              for p in view["products"]}
@@ -398,13 +409,13 @@ def _plain_search(message: str, state: ChatState, res: Resources, user_id: str |
 
 
 def _dispatch(name: str, args: dict, message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
-              link: str | None, plain: bool) -> TurnResult:
+              link: str | None, plain: bool, on_products: Callable[[list[dict]], None] | None = None) -> TurnResult:
     """Run the action the LLM chose (`plain`: no usable tool call, so search the message as typed)."""
     if name == "search":
         if plain:
-            result = _plain_search(message, state, res, user_id, n, link)
+            result = _plain_search(message, state, res, user_id, n, link, on_products)
         else:
-            result = do_search(args, message, state, res, user_id, n, link)
+            result = do_search(args, message, state, res, user_id, n, link, on_products)
     elif name == "compare":
         result = do_compare(args, state, res, link)
     elif name == "similar":

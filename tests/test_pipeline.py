@@ -187,3 +187,15 @@ def test_respond_uses_hybrid_retrieval_when_configured(tmp_path):
     assert out.ranked["product_id"].tolist()[0] == "B"             # keyword match first (dense prefers A)
     cfg = {"ranking": {}, "retrieval": {"pool_size": 5}, "app": {"retrieval": {"hybrid_alpha": 0.2}}}
     assert app_config(cfg)["retrieval"] == {"pool_size": 5, "hybrid_alpha": 0.2}
+
+
+# ---- Phase 13.6 (C): products first, answer when validated -------------------------------------------------
+
+def test_products_are_handed_over_before_the_answer_is_generated(tmp_path):
+    events = []
+    res = resources(tmp_path, [])
+    answers = iter([gen(["A", "B"])])
+    res.client.transport = lambda *a: events.append("generate") or next(answers)
+    out = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"),
+                  on_products=lambda view: events.append(("products", [p["product_id"] for p in view["products"]])))
+    assert events == [("products", ["A", "B"]), "generate"] and out.answer.answer is not None

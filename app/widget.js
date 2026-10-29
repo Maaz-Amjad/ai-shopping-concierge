@@ -47,6 +47,30 @@
     return e;
   }
 
+  // Phase 13.6: read a newline-delimited JSON stream; onEvent gets every event, the promise the last one.
+  function streamJson(path, body, onEvent) {
+    return fetch(api + path, {method: "POST", headers: headers, body: JSON.stringify(body)}).then(function (r) {
+      if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.statusText); });
+      var reader = r.body.getReader(), decoder = new TextDecoder(), buffer = "", last = null;
+      function pump() {
+        return reader.read().then(function (chunk) {
+          buffer += decoder.decode(chunk.value || new Uint8Array(), {stream: !chunk.done});
+          var lines = buffer.split("\n");
+          buffer = chunk.done ? "" : lines.pop();
+          lines.forEach(function (line) {
+            if (!line.trim()) return;
+            var e = JSON.parse(line);
+            if (e.type === "error") throw new Error(e.detail);
+            last = e;
+            onEvent(e);
+          });
+          return chunk.done ? last : pump();
+        });
+      }
+      return pump();
+    });
+  }
+
   function price(p) { return p === null || p === undefined ? "price not listed" : "$" + Number(p).toFixed(2); }
   function stars(p) {
     return p.avg_rating === null || p.avg_rating === undefined ? "" :
@@ -160,10 +184,19 @@
       send.disabled = true;
       var wait = el("div", "cw-meta", "…");
       msgs.appendChild(wait);
-      return fetch(api + path, {method: "POST", headers: headers,
-                                body: JSON.stringify(body)})
-        .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.detail || r.statusText); return b; }); })
+      var early = null;                      // products shown before the answer arrives (/chat/stream)
+      var request = path === "/chat" ?
+        streamJson("/chat/stream", body, function (e) {
+          if (e.type !== "products") return;
+          early = botMessage({text: "Here is what I found; writing a short summary…", products: e.products});
+          msgs.insertBefore(early, wait);
+          msgs.scrollTop = msgs.scrollHeight;
+        }) :
+        fetch(api + path, {method: "POST", headers: headers, body: JSON.stringify(body)})
+          .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.detail || r.statusText); return b; }); });
+      return request
         .then(function (data) {
+          if (early) early.remove();
           state = data.state;
           var entry = {bot: {text: data.text, products: data.products, comparison: data.comparison, link: data.link}};
           log.push(entry); persist(); show(entry);
@@ -241,11 +274,8 @@
     button.disabled = true;
     out.textContent = "";
     out.appendChild(el("div", "cw-meta", "Searching…"));
-    fetch(api + "/search", {
-      method: "POST", headers: headers,
-      body: JSON.stringify({query: q, store: store, user_id: user, n: n})
-    }).then(function (r) {
-      return r.json().then(function (body) { if (!r.ok) throw new Error(body.detail || r.statusText); return body; });
+    streamJson("/search/stream", {query: q, store: store, user_id: user, n: n}, function (e) {
+      if (e.type === "products") render({parsed: e.parsed, products: e.products, answer: "Writing a short summary…"});
     }).then(render).catch(function (e) {
       out.textContent = "";
       out.appendChild(el("div", "cw-error", "Search failed: " + e.message));

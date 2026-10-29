@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -77,11 +77,14 @@ class PipelineResult:
 
 
 def respond(query: str, res: Resources, user_id: str | None = None, n: int | None = None,
-            parsed: ParsedQuery | None = None, use_exclusions: bool = False, llm: bool = True) -> PipelineResult:
+            parsed: ParsedQuery | None = None, use_exclusions: bool = False, llm: bool = True,
+            on_products: Callable[[dict], None] | None = None) -> PipelineResult:
     """Answer one query (spec 11). Pass `parsed` to reuse a cached parse; unknown users are cold-start.
 
     use_exclusions=False matches S6 = S5 + personalization; True adds the optional exclusions (spec 8.3).
     llm=False makes no LLM call: semantic-only search (unless `parsed` is given) and the template answer.
+    on_products(view) is called with the ranked products before the answer is generated (Phase 13.6: shoppers see
+    products in about a second; the answer follows once it has passed the grounding validator).
     """
     from src.embed import encode_query, use_query_instruction
 
@@ -122,6 +125,8 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
                  price_excluded=result.price_excluded, n_unpriced=len(result.unpriced))
 
     t = time.perf_counter()
+    if on_products is not None:
+        on_products({"query": query, "parsed": parsed.model_dump(), "products": product_items(ranked, res)})
     items = res.catalog.iloc[ranked["row"].to_numpy()].reset_index(drop=True)
     suggestions = relaxation_suggestions(res.catalog, parsed) if items.empty else None
     if llm:
@@ -164,7 +169,8 @@ def app_config(cfg: dict) -> dict:
 
 def search_products(query: str, res: Resources, *, max_price: float | None = None, min_price: float | None = None,
                     category: str | None = None, brand: str | None = None, n: int | None = None,
-                    user_id: str | None = None, use_exclusions: bool = True) -> PipelineResult:
+                    user_id: str | None = None, use_exclusions: bool = True,
+                    on_products: Callable[[dict], None] | None = None) -> PipelineResult:
     """Tool interface (spec 11): the LLM parses the query; filters passed explicitly (a store's UI or an AI agent)
     override the parsed ones and are validated like parser output (unknown category/brand dropped and logged).
 
@@ -175,16 +181,17 @@ def search_products(query: str, res: Resources, *, max_price: float | None = Non
                                   "brand": brand}.items() if v is not None}
     try:
         if not explicit:
-            return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions)
+            return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions, on_products=on_products)
         pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
         parsed, log = validate(pr.parsed.model_copy(update=explicit), query, res.meta)
-        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions)
+        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions, on_products=on_products)
         out.flags.update(parse_log=pr.log + [f"explicit filter: {k}={v}" for k, v in explicit.items()] + log,
                          parser_fallback=pr.fallback)
         return out
     except CallLimitReached:
         parsed, log = validate(ParsedQuery(semantic_query=query, **explicit), query, res.meta)
-        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions, llm=False)
+        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions, llm=False,
+                      on_products=on_products)
         out.flags.update(parse_log=log + ["LLM call limit reached: catalog-only answer"], parser_fallback=True)
         return out
 
@@ -215,12 +222,17 @@ def records(df: pd.DataFrame) -> list[dict[str, Any]]:
     return [{k: _plain(v) for k, v in row.items()} for row in df.to_dict("records")]
 
 
+def product_items(ranked: pd.DataFrame, res: Resources) -> list[dict]:
+    """Ranked products as JSON records: catalog fields plus score components (NFR-7)."""
+    products = res.catalog.iloc[ranked["row"].to_numpy()][product_fields(res.catalog)].reset_index(drop=True)
+    scores = ranked[[c for c in SCORE_FIELDS if c in ranked]].reset_index(drop=True)
+    return records(pd.concat([products, scores], axis=1))
+
+
 def result_to_dict(query: str, out: PipelineResult, res: Resources) -> dict[str, Any]:
     """JSON view of a pipeline result: parsed filters, products with score components (NFR-7), answer, flags."""
-    products = res.catalog.iloc[out.ranked["row"].to_numpy()][product_fields(res.catalog)].reset_index(drop=True)
-    scores = out.ranked[[c for c in SCORE_FIELDS if c in out.ranked]].reset_index(drop=True)
     reasons = {r.product_id: r.reason for r in out.answer.answer.recommendations} if out.answer.answer else {}
-    items = records(pd.concat([products, scores], axis=1))
+    items = product_items(out.ranked, res)
     for item in items:
         item["reason"] = reasons.get(item["product_id"])
     flags = {k: (v if isinstance(v, (list, str, bool, type(None))) else _plain(v)) for k, v in out.flags.items()}

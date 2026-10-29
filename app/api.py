@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import queue
 import threading
 import time
 from collections import OrderedDict, defaultdict, deque
@@ -22,7 +23,7 @@ from typing import Callable
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from src import ROOT, load_config
@@ -70,7 +71,7 @@ def store_version(store: str | None) -> float:
 
 MAX_WEBHOOK_BYTES = 2 * 1024 * 1024
 OPEN_PATHS = {"/health", "/widget.js", "/", "/docs", "/openapi.json", "/docs/oauth2-redirect", "/redoc"}
-LLM_PATHS = {"/search", "/chat"}
+LLM_PATHS = {"/search", "/chat", "/search/stream", "/chat/stream"}
 WEBHOOK_TOPICS = {"shopify": ({"products/create", "products/update"}, {"products/delete"}),
                   "woocommerce": ({"product.created", "product.updated", "product.restored"}, {"product.deleted"})}
 
@@ -97,6 +98,29 @@ class RateLimiter:
                 return 60 - (now - q[0])
             q.append(now)
             return 0.0
+
+
+def ndjson_stream(work: Callable[[Callable[[dict], None]], dict]) -> StreamingResponse:
+    """Phase 13.6: run `work(emit)` in a thread and stream each emitted event, then its final result, as one JSON
+    object per line (products first, the validated answer when ready)."""
+    events: queue.Queue = queue.Queue()
+
+    def run() -> None:
+        try:
+            events.put(("final", work(lambda e: events.put(("event", e)))))
+        except Exception as exc:  # noqa: BLE001 - reported to the client as an error line
+            events.put(("error", {"type": "error", "detail": str(exc).splitlines()[0][:200] if str(exc) else
+                                  type(exc).__name__}))
+
+    def lines():
+        threading.Thread(target=run, daemon=True).start()
+        while True:
+            kind, item = events.get()
+            yield json.dumps(item) + "\n"
+            if kind != "event":
+                return
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson")
 
 
 def signature(secret: str, body: bytes) -> str:
@@ -212,6 +236,39 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         out = search_products(req.query, res, max_price=req.max_price, min_price=req.min_price,
                               category=req.category, brand=req.brand, n=req.n, user_id=req.user_id)
         return result_to_dict(req.query, out, res)
+
+    @app.post("/search/stream")
+    def search_stream(req: SearchRequest, x_api_key: str | None = Header(None)) -> StreamingResponse:
+        """Like /search, as NDJSON: {"type": "products", ...} first, then {"type": "answer", ...}."""
+        check_key(req.store or None, x_api_key)
+        res = resources(req.store)
+        if not req.query.strip():
+            raise HTTPException(400, "Please enter a query.")
+
+        def work(emit):
+            out = search_products(req.query, res, max_price=req.max_price, min_price=req.min_price,
+                                  category=req.category, brand=req.brand, n=req.n, user_id=req.user_id,
+                                  on_products=lambda view: emit({"type": "products", **view}))
+            return {"type": "answer", **result_to_dict(req.query, out, res)}
+
+        return ndjson_stream(work)
+
+    @app.post("/chat/stream")
+    def chat_stream(req: ChatRequest, x_api_key: str | None = Header(None)) -> StreamingResponse:
+        """Like /chat, as NDJSON: for a search, {"type": "products", ...} first; always {"type": "turn", ...} last."""
+        store = req.store or None
+        check_key(store, x_api_key)
+        res = resources(store)
+
+        def work(emit):
+            try:
+                out = chat_turn(req.message, req.state, res, user_id=req.user_id, n=req.n, link=link_template(store),
+                                on_products=lambda products: emit({"type": "products", "products": products}))
+            except ValidationError:
+                raise ValueError("invalid chat state") from None
+            return {"type": "turn", **out.to_dict()}
+
+        return ndjson_stream(work)
 
     @app.post("/chat")
     def chat(req: ChatRequest, x_api_key: str | None = Header(None)) -> dict:

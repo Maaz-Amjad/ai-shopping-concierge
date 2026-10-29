@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 280 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 283 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -372,6 +372,16 @@ product stays the true cosine; the blended score only sets the order. The
 chosen a sits at the edge of the grid, so a larger value was not tried. BM25 adds about 12 ms per query (p95 29 ms) and
 1.3 s to load a 10,000-product store. The app, API, chat and MCP server use a = 0.5 (`app.retrieval`); every
 benchmark table above keeps pure dense retrieval. Reproduce with `python -m src.evaluate hybrid --split dev|test`.
+
+### 12.6 Faster replies: products first
+
+Generation dominates the wait (p95 12.7 s, section 6.5) while retrieval and ranking take milliseconds, so the new
+`/search/stream` and `/chat/stream` endpoints send the ranked products as soon as they exist and the written answer
+when it is ready; the website widget shows the product cards first with "writing a short summary…". The answer is not
+streamed word by word on purpose: it must pass the grounding validator before anyone sees it, so unchecked text is
+never shown. This shortens the time until a shopper sees products to roughly the query-understanding call plus
+retrieval; the time until the full answer is unchanged. Not measured live (that needs fresh LLM calls); the order of
+events is covered by tests.
 
 ## 13. Future work
 
