@@ -44,8 +44,9 @@ def minmax(x: np.ndarray) -> np.ndarray:
 
 
 def popularity_score(counts: np.ndarray, max_count: float) -> np.ndarray:
-    """S_pop = log(1 + count) / log(1 + max_count)."""
-    return np.log1p(np.asarray(counts, dtype=np.float64)) / np.log1p(max_count)
+    """S_pop = log(1 + count) / log(1 + max_count); 0 everywhere when no product has interactions (spec 8.4)."""
+    counts = np.asarray(counts, dtype=np.float64)
+    return np.log1p(counts) / np.log1p(max_count) if max_count > 0 else np.zeros_like(counts)
 
 
 def user_vector(rows: np.ndarray, embeddings: np.ndarray, timestamps: np.ndarray | None = None,
