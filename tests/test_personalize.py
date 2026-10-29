@@ -27,6 +27,11 @@ def test_popularity_score_is_log_scaled():
     assert popularity_score(np.array([9]), 99)[0] == pytest.approx(math.log(10) / math.log(100))
 
 
+def test_popularity_score_is_zero_when_no_product_has_interactions():
+    # 29 Oct: an imported store has no sales history (all counts 0); log1p(0) = 0 made S_pop NaN and scrambled ranks.
+    assert popularity_score(np.array([0, 0]), 0).tolist() == [0.0, 0.0]
+
+
 def test_cold_start_drops_personal_weight_and_renormalizes():
     w = Weights(0.7, 0.25, 0.05).cold_start()
     assert (w.sem, w.pers, w.pop) == pytest.approx((0.7 / 0.75, 0.0, 0.05 / 0.75))
