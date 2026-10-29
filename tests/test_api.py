@@ -51,3 +51,22 @@ def test_similar_and_widget_and_demo_page(client):
     assert js.status_code == 200 and "javascript" in js.headers["content-type"] and "textContent" in js.text
     assert "innerHTML" not in js.text                                   # product text is never parsed as HTML
     assert 'src="/widget.js"' in client.get("/").text
+
+
+# ---- verifier findings, Phase 11 (29 Oct) -------------------------------------------------------------
+
+def test_path_like_store_names_are_rejected_before_loading(tmp_path):
+    calls = []
+    c = TestClient(create_app(lambda store: calls.append(store)))
+    for bad in ("../x", "C:/Users/x", "a/b"):
+        assert c.get("/meta", params={"store": bad}).status_code == 400
+        assert c.post("/search", json={"query": "q", "store": bad}).status_code == 400
+    assert calls == []                                                   # the loader never saw them
+
+
+def test_cors_allows_only_configured_origins(tmp_path):
+    c = TestClient(create_app(lambda store: resources(tmp_path, []), allowed_origins=["https://shop.example"]))
+    ok = c.options("/search", headers={"Origin": "https://shop.example", "Access-Control-Request-Method": "POST"})
+    assert ok.status_code == 200 and ok.headers["access-control-allow-origin"] == "https://shop.example"
+    bad = c.options("/search", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"})
+    assert "access-control-allow-origin" not in bad.headers

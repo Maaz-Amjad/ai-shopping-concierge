@@ -82,3 +82,67 @@ def test_build_store_round_trips_through_load_resources(tmp_path, monkeypatch):
     res = pipeline.load_resources(cfg, store="demo")
     assert len(res.catalog) == 3 and res.embeddings.shape == (3, 4) and res.profiles == {}
     assert res.meta.categories == ["Kettles", "Toasters"]
+
+
+# ---- verifier findings, Phase 11 (29 Oct): failing tests first -------------------------------------------
+
+def test_store_names_cannot_escape_the_stores_folder(tmp_path, monkeypatch):
+    from src import pipeline
+
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    for bad in ("../x", "..", "C:/x", "a/b", "a\b", ""):
+        assert not store.valid_store_name(bad)
+        with pytest.raises(ValueError, match="store name"):
+            store.build_store(bad, write(tmp_path, "s.csv", SHOPIFY_CSV), "shopify", model=FakeModel(), cfg={})
+        with pytest.raises(ValueError, match="store name"):
+            pipeline.load_resources({"seed": 42}, store=bad)
+    assert store.valid_store_name("my-store_2")
+
+
+def test_shopify_taxonomy_level_names_may_contain_commas(tmp_path):
+    feed = pd.DataFrame({"Handle": ["beans"], "Title": ["Coffee Beans"],
+                         "Product Category": ["Food, Beverages & Tobacco > Beverages > Coffee, Tea & Cocoa"]})
+    cat, _ = import_feed(feed, "shopify")
+    assert cat.iloc[0]["category"] == "Coffee, Tea & Cocoa"
+    woo, _ = import_feed(read_feed(write(tmp_path, "w.csv", WOO_CSV)), "woocommerce")
+    assert woo.iloc[0]["category"] == "Kettles"                               # Woo lists categories with commas
+
+
+def test_unpublished_products_and_woocommerce_variations(tmp_path):
+    shop = pd.DataFrame({"Handle": ["a", "b", "b"], "Title": ["Live", "Draft", ""], "Status": ["active", "draft", ""],
+                         "Variant Price": ["5", "6", "7"]})
+    cat, log = import_feed(shop, "shopify")
+    assert cat["product_id"].tolist() == ["a"] and log["dropped_unpublished"] == 1
+    woo = pd.DataFrame({"ID": ["11", "12", "13", "14"], "SKU": ["", "", "", ""], "Type": ["variable", "variation",
+                        "variation", "simple"], "Parent": ["", "id:11", "id:11", ""], "Published": ["1", "1", "1", "0"],
+                        "Name": ["Hoodie", "Hoodie - Blue", "Hoodie - Red", "Hidden"], "Regular price": ["", "30", "25", "9"],
+                        "Categories": ["Clothing > Hoodies", "", "", "Clothing"]})
+    cat, log = import_feed(woo, "woocommerce")
+    assert cat["product_id"].tolist() == ["11"] and cat.iloc[0]["price"] == 25.0   # cheapest variation
+    assert cat.iloc[0]["category"] == "Hoodies" and log["dropped_variations"] == 2 and log["dropped_unpublished"] == 1
+
+
+def test_shopify_products_json_url_reads_every_page(monkeypatch):
+    import httpx
+
+    pages = {1: [{"handle": f"p{i}", "title": f"P{i}", "variants": [{"price": "1"}]} for i in range(250)],
+             2: [{"handle": "last", "title": "Last", "variants": [{"price": "2"}]}]}
+
+    class Resp:
+        def __init__(self, products): self.products = products
+        def raise_for_status(self): return self
+        def json(self): return {"products": self.products}
+
+    def fake_get(url, **kwargs):
+        page = int(url.split("page=")[1].split("&")[0])
+        return Resp(pages.get(page, []))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    feed = read_feed("https://shop.example/products.json")
+    assert len(feed) == 251 and feed["handle"].iloc[-1] == "last"
+
+
+def test_numeric_ids_with_missing_values_stay_integers():
+    feed = pd.DataFrame({"product_id": [1, None, 3], "title": ["A", "B", "C"]})
+    cat, _ = import_feed(feed, "generic")
+    assert cat["product_id"].tolist() == ["1", "3"]

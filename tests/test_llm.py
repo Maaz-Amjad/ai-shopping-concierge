@@ -184,3 +184,29 @@ def test_calls_today_counts_logged_calls(tmp_path):
     client.generate("a", "v1")
     client.generate("b", "v1")
     assert client.calls_today() == 2
+
+
+def test_concurrent_calls_respect_the_call_cap_and_keep_the_cache_valid(tmp_path):
+    # Verifier, Phase 11 (29 Oct): the API serves requests from a thread pool and shares one client per store.
+    import threading
+    import time
+
+    llm._last_call_at.clear()
+    client = LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", rpm=1200, max_calls=2,
+                       transport=lambda *a: (time.sleep(0.02), "ok")[1], sleep=time.sleep)
+    results = []
+
+    def worker(i):
+        try:
+            results.append(client.generate(f"prompt {i}", "v1"))
+        except CallLimitReached:
+            results.append("capped")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert client.calls_made == 2 and results.count("ok") == 2 and results.count("capped") == 6
+    lines = (tmp_path / "c.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2 and all(json.loads(line)["response"] == "ok" for line in lines)
