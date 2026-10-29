@@ -10,7 +10,10 @@ import argparse
 import json
 import os
 import re
+import secrets
+import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -222,6 +225,7 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
         if field not in columns:
             raise ValueError(f"unknown field {field!r}; expected one of {FIELDS + list(OPTIONAL_FIELDS)}")
         columns[field] = [column]
+    columns["source_id"] = ["id", "ID"]                 # the platform's own id (webhook deletes carry only this)
     missing = [f for f in ("product_id", "title") if not any(c in feed.columns for c in columns[f])]
     if missing:
         raise ValueError(f"feed has no column for {missing}; columns are {list(feed.columns)}; pass a mapping")
@@ -244,6 +248,7 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     counts = pd.to_numeric(pick("rating_count"), errors="coerce").replace([np.inf, -np.inf], np.nan)
     df["rating_count"] = counts.fillna(0).clip(lower=0).astype(int)      # odd values (text, inf) count as 0
     df["product_id"] = df["product_id"].map(_clean_id)
+    df["source_id"] = pick("source_id").map(_clean_id)
     df["in_stock"] = row_stock(feed, preset, (mapping or {}).get("in_stock"))
     stock_by_id = df.groupby("product_id")["in_stock"].agg(_any_stock)        # before variant rows are dropped
     for field in ("title", "description", "features", "brand"):
@@ -263,12 +268,18 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     df["brand"] = df["brand"].replace("", None)
     df["category"] = df["category"].replace("", "Other")
     df = df.assign(popularity=0).reset_index(drop=True)
-    df["product_text"] = df.apply(build_product_text, axis=1)
-    log.update(out_of_stock=sum(v is False for v in df["in_stock"]),
-               stock_unknown=sum(v is None for v in df["in_stock"]))
-    log.update(products=len(df), price_missing=int(df["price"].isna().sum()),
-               brand_missing=int(df["brand"].isna().sum()), n_categories=int(df["category"].nunique()))
+    df["product_text"] = [build_product_text(r) for _, r in df.iterrows()]   # also fine when nothing is left
+    log.update(catalog_stats(df))
     return df, log
+
+
+def catalog_stats(df: pd.DataFrame) -> dict:
+    """Counts shown after an import or update."""
+    stock = df["in_stock"] if "in_stock" in df else pd.Series([None] * len(df), dtype=object)
+    return {"out_of_stock": sum(v is False or v is np.False_ for v in stock),
+            "stock_unknown": sum(v is None for v in stock), "products": len(df),
+            "price_missing": int(df["price"].isna().sum()), "brand_missing": int(df["brand"].isna().sum()),
+            "n_categories": int(df["category"].nunique())}
 
 
 def build_store(name: str, source: str | Path, preset: str = "generic", mapping: dict[str, str] | None = None,
@@ -284,13 +295,22 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
                           mapping: dict[str, str] | None = None, model: Any = None, cfg: dict | None = None,
                           source: str = "upload", site: str | None = None) -> dict:
     """Same as build_store for a feed already read (the demo app's upload and store-link flows)."""
-    from src.embed import encode_products, load_model
 
     check_store_name(name)
-    cfg = cfg or load_config()
     catalog, log = import_feed(feed, preset, mapping)
     if catalog.empty:
         raise ValueError("no products left after import")
+    log.update(source=source, preset=preset, mapping=mapping or {}, site=site_host(site))
+    with _store_locks[name]:
+        return write_store(name, catalog, log, model, cfg)
+
+
+def write_store(name: str, catalog: pd.DataFrame, log: dict, model: Any = None, cfg: dict | None = None) -> dict:
+    """Save a store's catalog and embeddings, embedding only new products or changed texts; returns the log with
+    added/removed/changed/reused counts (call with the store's lock held)."""
+    from src.embed import encode_products, load_model
+
+    cfg = cfg or load_config()
     out = STORES_DIR / name
     old_vectors, old_texts = previous_vectors(out, cfg["embedding"]["model"])
     keys = list(zip(catalog["product_id"], catalog["product_text"]))
@@ -307,10 +327,96 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
     log.update(added=len(ids - set(old_texts)), removed=len(set(old_texts) - ids),
                changed=sum(pid in old_texts and old_texts[pid] != text for pid, text in keys),
                reused=len(keys) - len(todo), updated_at=time.strftime("%Y-%m-%d %H:%M"))
-    log.update(store=name, source=source, preset=preset, mapping=mapping or {}, site=site_host(site),
-               embedding_model=cfg["embedding"]["model"])
+    log.update(store=name, embedding_model=cfg["embedding"]["model"])
     (out / "import_log.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     return log
+
+
+_store_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)   # one writer per store at a time
+
+
+def shopify_webhook_feed(product: dict) -> pd.DataFrame:
+    """A Shopify products/create|update webhook payload -> a one-row feed for the shopify_json preset. Webhook
+    variants carry inventory fields instead of `available`; a product that is not active is dropped as unpublished."""
+    row = flatten_shopify(product)
+    variants = product.get("variants") or []
+    if row["available"] is None and variants:
+        row["available"] = any(not v.get("inventory_management") or v.get("inventory_policy") == "continue"
+                               or (v.get("inventory_quantity") or 0) > 0 for v in variants)
+    row["Status"] = product.get("status") or ""
+    return pd.DataFrame([row])
+
+
+def woocommerce_webhook_feed(product: dict) -> pd.DataFrame:
+    """A WooCommerce product.created|updated|restored webhook payload -> a one-row feed in the export's columns."""
+    names = lambda items: ", ".join(str(i.get("name", "")) for i in items or [] if isinstance(i, dict))  # noqa: E731
+    stock = {"instock": "1", "onbackorder": "1", "outofstock": "0"}.get(str(product.get("stock_status")), "")
+    return pd.DataFrame([{
+        "ID": product.get("id"), "SKU": product.get("sku") or "", "Type": product.get("type") or "",
+        "Name": product.get("name") or "", "Description": product.get("description") or "",
+        "Short description": product.get("short_description") or "",
+        "Regular price": str(product.get("regular_price") or product.get("price") or ""),
+        "Sale price": str(product.get("sale_price") or ""), "Categories": names(product.get("categories")),
+        "Tags": names(product.get("tags")), "In stock?": stock,
+        "Published": "1" if product.get("status") == "publish" else "0"}])
+
+
+def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids: list[str] | tuple = (),
+                        model: Any = None, cfg: dict | None = None, preset: str | None = None) -> dict:
+    """Webhook update: add or replace the products in `feed` (in `preset` format; webhooks arrive as shopify_json
+    or woocommerce whatever file the store was first imported from; default: the store's own preset and mapping),
+    remove `delete_ids` (product id or the platform's id) and any feed product that is no longer published.
+    Only products whose text changed are embedded again."""
+    check_store_name(name)
+    out = STORES_DIR / name
+    with _store_locks[name]:
+        if not (out / "catalog.pkl").exists():
+            raise ValueError(f"no store {name!r}; import it first")
+        log = json.loads((out / "import_log.json").read_text(encoding="utf-8"))
+        catalog = pd.read_pickle(out / "catalog.pkl")
+        gone = {str(i) for i in delete_ids}
+        new = catalog.iloc[:0]
+        if feed is not None and not feed.empty:
+            own = log.get("preset", "generic")
+            preset = preset or own
+            new, _ = import_feed(feed, preset, (log.get("mapping") or None) if preset == own else None)
+            raw_ids = {str(_clean_id(v)) for c in ("id", "ID", "handle", "Handle", "SKU", "product_id")
+                       if c in feed for v in feed[c] if _clean_id(v) is not None}
+            gone |= raw_ids - set(new["product_id"]) - set(new.get("source_id", pd.Series(dtype=object)).dropna())
+        source_ids = catalog["source_id"].astype(str) if "source_id" in catalog else pd.Series("", index=catalog.index)
+        drop = catalog["product_id"].astype(str).isin(gone | set(new["product_id"])) | source_ids.isin(gone)
+        merged = pd.concat([catalog[~drop], new], ignore_index=True)
+        if merged.empty:
+            raise ValueError("the update would leave the store with no products")
+        log.update(catalog_stats(merged))
+        return write_store(name, merged, log, model, cfg)
+
+
+def store_secrets(name: str) -> dict:
+    """The store's webhook secret and API key (stores/<name>/secrets.json, created on first use, never committed)."""
+    check_store_name(name)
+    out = STORES_DIR / name
+    if not (out / "catalog.pkl").exists():
+        raise ValueError(f"no store {name!r}; import it first")
+    path = out / "secrets.json"
+    with _store_locks[f"{name}:secrets"]:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+        values = {"webhook_secret": secrets.token_urlsafe(32), "api_key": secrets.token_urlsafe(32)}
+        path.write_text(json.dumps(values), encoding="utf-8")
+        return values
+
+
+def set_webhook_secret(name: str, secret: str) -> None:
+    """Save the key the platform signs webhooks with (Shopify shows it on its Webhooks settings page; for
+    WooCommerce you may paste ours into the webhook form instead)."""
+    secret = str(secret).strip()
+    if len(secret) < 16 or any(c.isspace() for c in secret):
+        raise ValueError("the signing key should be at least 16 characters, without spaces")
+    values = store_secrets(name)
+    with _store_locks[f"{name}:secrets"]:
+        values["webhook_secret"] = secret
+        (STORES_DIR / name / "secrets.json").write_text(json.dumps(values), encoding="utf-8")
 
 
 def save_store_files(out: Path, catalog: pd.DataFrame, emb: np.ndarray) -> None:
@@ -456,9 +562,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--refresh", action="store_true",
                         help="update an imported store from its saved source (only changed products are re-embedded)")
     parser.add_argument("--every", type=float, default=0, help="with --refresh: repeat every N minutes")
+    parser.add_argument("--secrets", action="store_true",
+                        help="print the store's webhook paths, webhook secret and API key (creates them once)")
+    parser.add_argument("--set-webhook-secret", default="", help="save the signing key Shopify shows for webhooks")
     parser.add_argument("--preset", default="generic", choices=sorted(PRESETS))
     parser.add_argument("--map", default="", help="field=column pairs, e.g. 'title=Name,price=Cost'")
     args = parser.parse_args(argv)
+    if args.set_webhook_secret:
+        set_webhook_secret(args.name, args.set_webhook_secret)
+        print("saved")
+        return
+    if args.secrets:
+        values = store_secrets(args.name)
+        print(json.dumps({"shopify_webhook": f"/webhooks/{args.name}/shopify",
+                          "woocommerce_webhook": f"/webhooks/{args.name}/woocommerce", **values}, indent=2))
+        return
     if args.every < 0:
         parser.error("--every must be 0 or more minutes")
     if args.refresh and (args.file or args.map):

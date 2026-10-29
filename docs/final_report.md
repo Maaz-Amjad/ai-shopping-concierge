@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 240 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 251 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -326,6 +326,19 @@ personalization loss on test (S6 vs S5 from −0.026 to −0.009 at g = 0). The 
 four judged queries with limits, so neither is decisive. Switching to g = 0.5 now would be choosing on test, so the
 feature ships switched off (`pers_factor_with_limits: 1.0` in `app.ranking`), ready to turn on once a larger dev set
 supports it. Reproduce with `python -m src.evaluate adaptive --split dev|test`.
+
+### 12.4 Running for a real store: API hardening and webhooks
+
+The API gained what a public deployment needs, without changing any result: a per-client rate limit (30 requests a
+minute for the LLM endpoints, 120 for the rest; 429 with Retry-After), optional per-store API keys, a request log with
+no query text or IP address (NFR-5), and a Dockerfile (written, not built here: Docker is not installed on the
+development machine). Stores can now push changes: Shopify and WooCommerce product webhooks are checked with the
+platform's HMAC-SHA256 signature, repeated deliveries are ignored, and each change updates or removes just that product,
+re-embedding only it. Checked live against the running server on a copy of the 300-product store: a signed update was
+applied in 0.8 s (price and "out of stock" stored), its repeat was ignored, a forged signature was refused (401), and
+the 120th request in a minute was rate-limited. Webhooks are paired with the scheduled refresh (daily is enough),
+because a missed or out-of-order delivery is only corrected by the next full read. A key placed in a public web page
+is visible to anyone, so for the browser widget the rate limit and the origin allow-list remain the real protection.
 
 ## 13. Future work
 

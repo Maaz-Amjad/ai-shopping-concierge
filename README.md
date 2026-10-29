@@ -34,6 +34,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13 Production improvements: star ratings in ranking (13.1) | done: test effect on relevance neutral, used by the app |
 | 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
 | 13.3 Smaller personal weight for requests with limits | done, kept off: dev chose no change, test disagreed (report 12.3) |
+| 13.4 API hardening, store webhooks, Dockerfile | done: rate limits, optional API keys, request log, signed Shopify/WooCommerce webhooks |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -119,8 +120,23 @@ client sends back the returned state), `POST /chat/action` (card buttons, no LLM
 `stores/` (not committed); their shoppers have no history, so personalization is off for them. Browsers may call the
 API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIERGE_ALLOWED_ORIGINS`
 (comma-separated), so add your store's domain there. Each server process makes at most `app.max_llm_calls` LLM
-calls (default 300), then answers from catalog fields only. The API listens on localhost; put it behind a proxy with
-authentication before exposing it.
+calls (default 300), then answers from catalog fields only.
+
+**Running it for a real store.** Each client gets `app.rate_limit_per_minute` requests (30/min for `/search` and
+`/chat`, 120/min for the rest; then 429 with `Retry-After`). With `app.require_api_key: true`, requests need an
+`X-API-Key` header: the store's key (`python -m src.store --name mystore --secrets`) or `CONCIERGE_API_KEY` for the
+demo catalog; the widget sends it from `data-key="..."` (a key in a web page is visible, so the rate limit and the
+origin allow-list remain the real protection for public widgets). Every request is logged to
+`artifacts/api_requests.jsonl` (method, path, store, status, time; no query text, no IP address). A `Dockerfile` is
+included (`docker build -t concierge .`; mount `data/`, `artifacts/`, `stores/`; it was written but not built here,
+because Docker is not installed on the development machine); put an HTTPS reverse proxy in front and set
+`app.trust_proxy: true`.
+
+**Instant updates (webhooks).** `POST /webhooks/<store>/shopify` and `/webhooks/<store>/woocommerce` accept product
+create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update
+or remove that one product (only it is re-embedded). WooCommerce: paste the store's webhook secret (`--secrets`) into
+the webhook form. Shopify signs with its own key: save it with `--set-webhook-secret KEY` or in the app (*Add your
+store → Instant updates*). Keep a daily `--refresh` as the safety net for missed or out-of-order deliveries.
 
 **MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). The app's *Connect to
 Claude Desktop* button sets it up; by hand, add:

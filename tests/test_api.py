@@ -111,3 +111,99 @@ def test_widget_card_buttons_send_the_product_id(client):
 def test_widget_shows_star_ratings(client):
     js = client.get("/widget.js").text
     assert "function stars(p)" in js and js.count("stars(p)") >= 3
+
+
+
+# ---- Phase 13.4: webhooks, rate limit, API key, request log ---------------------------------------------
+
+import base64  # noqa: E402
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
+
+
+def signed(secret: str, payload: dict) -> tuple[bytes, str]:
+    body = json.dumps(payload).encode()
+    return body, base64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
+
+
+@pytest.fixture
+def shop_app(tmp_path, monkeypatch):
+    from src import store
+    from test_store import SHOP_PRODUCT, FakeModel, webhook_store
+
+    webhook_store(tmp_path, monkeypatch)
+    res = resources(tmp_path, [])
+    res.model = FakeModel()
+    calls = []
+    monkeypatch.setattr(store, "apply_store_changes",
+                        lambda name, feed=None, delete_ids=(), model=None, cfg=None, preset=None: calls.append(
+                            (name, None if feed is None else feed.to_dict("records"), list(delete_ids))) or {})
+    app = create_app(lambda s: res, request_log=tmp_path / "requests.jsonl")
+    return TestClient(app), store.store_secrets("shop")["webhook_secret"], calls, SHOP_PRODUCT, tmp_path
+
+
+def test_signed_shopify_webhook_updates_the_store(shop_app):
+    client, secret, calls, product, _ = shop_app
+    body, sig = signed(secret, product)
+    headers = {"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update", "X-Shopify-Webhook-Id": "w1",
+               "Content-Type": "application/json"}
+    assert client.post("/webhooks/shop/shopify", content=body, headers=headers).status_code == 200
+    assert calls[0][0] == "shop" and calls[0][1][0]["handle"] == "steel-kettle"
+    assert client.post("/webhooks/shop/shopify", content=body, headers=headers).json()["status"] == "duplicate"
+    body, sig = signed(secret, {"id": 102})
+    client.post("/webhooks/shop/shopify", content=body, headers={**headers, "X-Shopify-Hmac-Sha256": sig,
+                                                                   "X-Shopify-Topic": "products/delete",
+                                                                   "X-Shopify-Webhook-Id": "w2"})
+    assert calls[1] == ("shop", None, ["102"]) and len(calls) == 2
+
+
+def test_webhooks_reject_bad_signatures_unknown_stores_and_topics(shop_app):
+    client, secret, calls, product, _ = shop_app
+    body, sig = signed(secret, product)
+    bad = client.post("/webhooks/shop/shopify", content=body,
+                      headers={"X-Shopify-Hmac-Sha256": "x" + sig[1:], "X-Shopify-Topic": "products/update"})
+    assert bad.status_code == 401
+    assert client.post("/webhooks/nope/shopify", content=body,
+                       headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "products/update"}).status_code == 404
+    assert client.post("/webhooks/shop/magento", content=body, headers={}).status_code == 404
+    other = client.post("/webhooks/shop/shopify", content=body,
+                        headers={"X-Shopify-Hmac-Sha256": sig, "X-Shopify-Topic": "orders/create"})
+    assert other.status_code == 200 and other.json()["status"] == "ignored" and calls == []
+
+
+def test_woocommerce_webhook_signature_and_ping(shop_app):
+    client, secret, calls, _, _ = shop_app
+    ping = client.post("/webhooks/shop/woocommerce", content=b"webhook_id=12",
+                       headers={"Content-Type": "application/x-www-form-urlencoded"})
+    assert ping.status_code == 200 and calls == []
+    body, sig = signed(secret, {"id": 7, "sku": "K-7", "name": "Kettle", "status": "publish",
+                                "stock_status": "instock", "regular_price": "20"})
+    ok = client.post("/webhooks/shop/woocommerce", content=body,
+                     headers={"X-WC-Webhook-Signature": sig, "X-WC-Webhook-Topic": "product.updated",
+                              "X-WC-Webhook-Delivery-ID": "d1"})
+    assert ok.status_code == 200 and calls[0][1][0]["SKU"] == "K-7"
+
+
+def test_rate_limit_api_key_and_request_log(tmp_path, monkeypatch):
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    res = resources(tmp_path, [parsed, gen(["A", "B"])] * 5)
+    monkeypatch.setenv("CONCIERGE_API_KEY", "k" * 32)
+    app = create_app(lambda s: res, request_log=tmp_path / "requests.jsonl", rate_limits={"llm": 2, "other": 3},
+                     require_api_key=True)
+    client = TestClient(app)
+    assert client.get("/meta").status_code == 401                                  # key required
+    key = {"X-API-Key": "k" * 32}
+    assert client.get("/meta", headers={"X-API-Key": "wrong"}).status_code == 401
+    assert client.get("/health").status_code == 200                                # always open
+    assert [client.post("/search", json={"query": "secret words"}, headers=key).status_code
+            for _ in range(3)] == [200, 200, 429]
+    assert "Retry-After" in client.post("/search", json={"query": "x"}, headers=key).headers
+    lines = [json.loads(x) for x in (tmp_path / "requests.jsonl").read_text().splitlines()]
+    assert {"ts", "method", "path", "status", "ms"} <= set(lines[0])
+    assert "secret words" not in (tmp_path / "requests.jsonl").read_text()          # no query text logged
+    assert [x["status"] for x in lines if x["path"] == "/search"][:3] == [200, 200, 429]
+
+
+def test_widget_sends_the_store_api_key_when_given(client):
+    js = client.get("/widget.js").text
+    assert 'getAttribute("data-key")' in js and 'headers["X-API-Key"]' in js and js.count("headers: headers") == 2

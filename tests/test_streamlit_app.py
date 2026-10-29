@@ -128,3 +128,27 @@ def test_update_products_button_refreshes_the_selected_store(tmp_path, monkeypat
     next(b for b in at.button if b.label == "Update products now").click().run()
     assert not at.exception
     assert any("1 new" in s.value and "1 out of stock" in s.value for s in at.success)
+
+
+
+def test_instant_updates_section_shows_webhook_urls(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+
+    res = resources(tmp_path, [])
+    (tmp_path / "stores" / "shop1").mkdir(parents=True)
+    (tmp_path / "stores" / "shop1" / "import_log.json").write_text(json.dumps({"products": 3}))
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: ["shop1"])
+    monkeypatch.setattr(store, "store_secrets", lambda name: {"webhook_secret": "s" * 40, "api_key": "k" * 40})
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": [], "product_id": [], "rating": [], "timestamp": []}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.sidebar.selectbox[0].select("shop1").run()
+    at.text_input(key="public_api").set_value("https://assistant.example.com/").run()
+    assert not at.exception
+    codes = [c.value for c in at.code]
+    assert "https://assistant.example.com/webhooks/shop1/shopify" in codes and "s" * 40 in codes

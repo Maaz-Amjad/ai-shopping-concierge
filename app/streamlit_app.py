@@ -24,7 +24,8 @@ from src import load_config  # noqa: E402
 from src.agent import chat_turn, run_action  # noqa: E402
 from src.pipeline import app_config, get_similar, load_resources, result_to_dict, search_products  # noqa: E402
 from src.store import (FIELDS, OPTIONAL_FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
-                       list_stores, read_feed, refresh_store, shopify_feed_url, store_name_from)
+                       list_stores, read_feed, refresh_store, set_webhook_secret, shopify_feed_url,
+                       store_name_from, store_secrets)
 
 DEMO = "Demo appliance store"
 EXAMPLES = ["quiet portable countertop ice maker under $150", "refrigerator water filter, not Samsung",
@@ -376,6 +377,33 @@ with add_tab:
                     st.warning(f"Couldn't update automatically: {md(str(exc))}.")
                 except Exception:  # noqa: BLE001 - network problems get one friendly message
                     st.error("Couldn't read your products right now. Please try again later.")
+            with st.expander("Instant updates (webhooks) — for a live store"):
+                st.markdown("Your shop can tell the assistant about every product change within seconds. This needs "
+                            "the assistant to be reachable on the internet over **https** (ask whoever hosts it). "
+                            "Keep a daily update as well, in case a message is missed.")
+                public = st.text_input("The assistant's public address", placeholder="https://assistant.mystore.com",
+                                       key="public_api")
+                if public and not public.lower().startswith("https://"):
+                    st.warning("The address must start with https://")
+                elif public:
+                    keys = store_secrets(store)
+                    base = public.rstrip("/")
+                    st.markdown("**Shopify:** *Settings → Notifications → Webhooks → Create webhook*, three times: "
+                                "events *Product creation*, *Product update* and *Product deletion*, format JSON, "
+                                "this URL:")
+                    st.code(f"{base}/webhooks/{store}/shopify", language=None)
+                    shopify_key = st.text_input("Then paste the key Shopify shows under the webhook list "
+                                                "(\"Your webhooks will be signed with …\")", type="password")
+                    if shopify_key and st.button("Save Shopify's key"):
+                        try:
+                            set_webhook_secret(store, shopify_key)
+                            st.success("Saved. Shopify's updates will now be accepted.")
+                        except ValueError as exc:
+                            st.warning(md(str(exc)))
+                    st.markdown("**WooCommerce:** *Settings → Advanced → Webhooks → Add webhook*, topics *Product "
+                                "created*, *Product updated*, *Product deleted*, this delivery URL and secret:")
+                    st.code(f"{base}/webhooks/{store}/woocommerce", language=None)
+                    st.code(keys["webhook_secret"], language=None)
 
     with st.container(border=True):
         st.markdown("### Step 2 · Put the assistant on your website")

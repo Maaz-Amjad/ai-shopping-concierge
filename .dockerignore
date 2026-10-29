@@ -1,0 +1,14 @@
+# hidden files and folders (.env, .git, .venv, editor and tool settings)
+.*
+data/
+artifacts/
+stores/
+reference/
+notebooks/
+eval/
+docs/
+tests/
+*.pdf
+*.zip
+*.md
+__pycache__/

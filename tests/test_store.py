@@ -386,3 +386,86 @@ def test_cli_refresh_rejects_negative_interval_and_ignored_options(tmp_path, mon
         with pytest.raises(SystemExit) as exc:
             store.main(argv)
         assert exc.value.code == 2                                       # rejected by the argument parser
+
+
+
+# ---- Phase 13.4: webhooks (one-product updates) and per-store secrets ----------------------------------
+
+SHOP_PRODUCT = {"id": 101, "handle": "steel-kettle", "title": "Steel Kettle", "vendor": "Brewly",
+                "product_type": "Kettles", "body_html": "<p>Fast boil</p>", "tags": "steel, cordless",
+                "status": "active", "variants": [{"price": "39.00", "inventory_management": "shopify",
+                                                  "inventory_policy": "deny", "inventory_quantity": 4}]}
+
+
+def webhook_store(tmp_path, monkeypatch, model=None):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    feed = pd.DataFrame([store.flatten_shopify({**SHOP_PRODUCT, "variants": [{"price": "39.00"}]}),
+                         store.flatten_shopify({"id": 102, "handle": "glass-kettle", "title": "Glass Kettle",
+                                                "variants": [{"price": "25.00"}]})])
+    store.build_store_from_feed("shop", feed, "shopify_json", model=FakeModel(), cfg=cfg, source="shop.com")
+    return cfg
+
+
+def test_shopify_webhook_updates_one_product_and_reembeds_only_changed_text(tmp_path, monkeypatch):
+    cfg = webhook_store(tmp_path, monkeypatch)
+    model = CountingModel()
+    sold_out = {**SHOP_PRODUCT, "variants": [{**SHOP_PRODUCT["variants"][0], "price": "35.00",
+                                               "inventory_quantity": 0}]}
+    log = store.apply_store_changes("shop", store.shopify_webhook_feed(sold_out), model=model, cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl").set_index("product_id")
+    assert cat.loc["steel-kettle", "price"] == 35.0 and cat.loc["steel-kettle", "in_stock"] is False
+    assert model.encoded == [] and log["products"] == 2 and log["source"] == "shop.com"   # text unchanged
+    new = {**SHOP_PRODUCT, "id": 103, "handle": "copper-kettle", "title": "Copper Kettle"}
+    store.apply_store_changes("shop", store.shopify_webhook_feed(new), model=model, cfg=cfg)
+    assert len(model.encoded) == 1
+    draft = {**SHOP_PRODUCT, "status": "draft"}                         # unpublished -> removed
+    store.apply_store_changes("shop", store.shopify_webhook_feed(draft), model=model, cfg=cfg)
+    store.apply_store_changes("shop", delete_ids=["102"], model=model, cfg=cfg)   # delete payloads carry the id
+    cat = pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl")
+    assert cat["product_id"].tolist() == ["copper-kettle"]
+    emb, ids = np.load(tmp_path / "stores" / "shop" / "embeddings.npy"), np.load(
+        tmp_path / "stores" / "shop" / "product_ids.npy")
+    assert ids.tolist() == ["copper-kettle"] and len(emb) == 1
+
+
+def test_woocommerce_webhook_feed_maps_stock_status_and_publishing():
+    product = {"id": 7, "sku": "K-7", "name": "Kettle", "type": "simple", "regular_price": "20", "sale_price": "18",
+               "description": "Boils", "short_description": "Fast", "categories": [{"name": "Kettles"}],
+               "tags": [{"name": "steel"}], "stock_status": "outofstock", "status": "publish"}
+    cat, _ = import_feed(store.woocommerce_webhook_feed(product), "woocommerce")
+    assert cat[["product_id", "price", "category"]].values.tolist() == [["K-7", 18.0, "Kettles"]]
+    assert cat["in_stock"].tolist() == [False] and cat["source_id"].tolist() == ["7"]
+    hidden, _ = import_feed(store.woocommerce_webhook_feed({**product, "status": "draft"}), "woocommerce")
+    assert hidden.empty
+
+
+def test_store_secrets_are_created_once_and_kept(tmp_path, monkeypatch):
+    webhook_store(tmp_path, monkeypatch)
+    first = store.store_secrets("shop")
+    assert len(first["webhook_secret"]) >= 32 and len(first["api_key"]) >= 32
+    assert store.store_secrets("shop") == first
+    with pytest.raises(ValueError, match="no store"):
+        store.store_secrets("missing")
+
+
+
+def test_webhook_secret_can_be_set_from_the_platform(tmp_path, monkeypatch):
+    webhook_store(tmp_path, monkeypatch)
+    store.set_webhook_secret("shop", "shpss_" + "a" * 26)
+    assert store.store_secrets("shop")["webhook_secret"] == "shpss_" + "a" * 26
+    with pytest.raises(ValueError, match="16 characters"):
+        store.set_webhook_secret("shop", "short")
+
+
+def test_webhooks_work_for_a_store_imported_from_a_shopify_csv(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    store.build_store("csv", write(tmp_path, "s.csv", SHOPIFY_CSV), "shopify", model=FakeModel(), cfg=cfg)
+    product = {**SHOP_PRODUCT, "variants": [{"price": "30.00", "inventory_management": "shopify",
+                                             "inventory_policy": "deny", "inventory_quantity": 0}]}
+    store.apply_store_changes("csv", store.shopify_webhook_feed(product), preset="shopify_json", model=FakeModel(),
+                              cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl").set_index("product_id")
+    assert cat.loc["steel-kettle", "price"] == 30.0 and cat.loc["steel-kettle", "in_stock"] is False
+    assert len(cat) == 3                                             # same product id (the handle), not a new one

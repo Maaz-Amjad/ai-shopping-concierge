@@ -11,6 +11,8 @@
   var script = document.currentScript;
   var api = (script.getAttribute("data-api") || new URL(script.src).origin).replace(/\/$/, "");
   var store = script.getAttribute("data-store") || null;
+  var headers = {"Content-Type": "application/json"};      // data-key: the store's API key, when keys are required
+  if (script.getAttribute("data-key")) headers["X-API-Key"] = script.getAttribute("data-key");
   var user = script.getAttribute("data-user") || null;
   var n = parseInt(script.getAttribute("data-n") || "5", 10);
 
@@ -158,7 +160,7 @@
       send.disabled = true;
       var wait = el("div", "cw-meta", "…");
       msgs.appendChild(wait);
-      return fetch(api + path, {method: "POST", headers: {"Content-Type": "application/json"},
+      return fetch(api + path, {method: "POST", headers: headers,
                                 body: JSON.stringify(body)})
         .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.detail || r.statusText); return b; }); })
         .then(function (data) {
@@ -240,7 +242,7 @@
     out.textContent = "";
     out.appendChild(el("div", "cw-meta", "Searching…"));
     fetch(api + "/search", {
-      method: "POST", headers: {"Content-Type": "application/json"},
+      method: "POST", headers: headers,
       body: JSON.stringify({query: q, store: store, user_id: user, n: n})
     }).then(function (r) {
       return r.json().then(function (body) { if (!r.ok) throw new Error(body.detail || r.statusText); return body; });

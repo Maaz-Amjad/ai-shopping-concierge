@@ -26,6 +26,12 @@ eval: {k: [5, 10], pool_depth: 10, bootstrap_resamples: 1000}
 app:
   max_llm_calls: 300                  # per server process (Flash-Lite free tier: 500 RPD); then template answers
   allowed_origins: ["http://localhost:8000", "http://127.0.0.1:8000"]   # add each store's domain for the widget
+  # Phase 13.4: requests per minute per client (llm = /search and /chat); API key per store (X-API-Key header,
+  # stores/<name>/secrets.json; CONCIERGE_API_KEY for the demo catalog); trust X-Forwarded-For only behind a proxy
+  rate_limit_per_minute: {llm: 30, other: 120}
+  require_api_key: false
+  trust_proxy: false
+  request_log: artifacts/api_requests.jsonl     # method, path, store, status, ms; no query text, no IP address
   # production weights for the app, API and MCP server (Phase 13.1): rating term chosen on dev (w_rat 0.10);
   # test effect on relevance neutral. The benchmark and experiments keep the spec weights in `ranking` above.
   # pers_factor_with_limits (Phase 13.3): share of w_pers kept when a request states price/category/brand limits.
