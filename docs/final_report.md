@@ -2,9 +2,8 @@
 
 Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | October 2026
 
-> **Status (29 Oct):** results numbers come from `eval/results/` (API call counts from the call log). Of the items the
-> personalized system S6 adds to its test top 10, 0.6 % (5 pairs on one query) could not be judged within the free-tier
-> quota; they count as not relevant.
+> **Status (29 Oct, final):** results numbers come from `eval/results/` (API call counts from the call log). Every
+> product in every reported top 10, including the personalized system's, has a relevance label.
 
 ## 1. Summary
 
@@ -21,7 +20,7 @@ On 15 held-out test queries (never used for tuning):
 | G1 query understanding | parse F1 ≥ 0.85 | **0.94** (precision 0.88, recall 1.00) |
 | G2 semantic retrieval | dense vs TF-IDF on NDCG@10, with CIs | **0.65 vs 0.40**; paired difference +0.25 [0.05, 0.48] |
 | G3 constraint enforcement | adherence ≥ 95 % | **100 %** for the filtered systems (vs 43–63 % without filters; filtered systems are scored on 8 queries because the 2 no-result queries return nothing) |
-| G4 personalization | no material relevance loss; beat popularity on next-item HitRate@10 | next item: **6.3 % vs 2.8 %** (CIs do not overlap); relevance: small loss, **−0.026** NDCG@10 [−0.044, −0.007]; precision@10 unchanged (−0.006 [−0.023, 0.008]) |
+| G4 personalization | no material relevance loss; beat popularity on next-item HitRate@10 | next item: **6.3 % vs 2.8 %** (CIs do not overlap); relevance: small loss, **−0.026** NDCG@10 [−0.044, −0.007]; precision@10 unchanged (−0.001 [−0.015, 0.010]) |
 | G5 grounded answers | 0 IDs outside the retrieved set; mismatches reported | **0** outside IDs; 22/22 answers grounded (21 on the first try); 0 price or brand mismatches in accepted answers |
 | NFR-1 latency | retrieval p95 < 500 ms; end-to-end p95 < 6 s | retrieval **11 ms**; generation alone p95 **12.7 s** (target not met) |
 
@@ -68,7 +67,7 @@ errors, and logs each call. Over the whole project the pipeline used 61 Flash-Li
   ("not stainless"), S6 = S5 + personalization.
 - **Relevance labels:** the union of every system's top 10 per query (659 pairs) was graded 0/1/2 by Gemini 3.8 Flash
   (a different model from the generator). A blind, stratified 25 % sample of those (167 pairs) was re-graded by hand;
-  65 further pairs that only S6 surfaces were judged later and are judge-only (so 23 % of all 724 labels are human-checked); the judge
+  70 further pairs that only S6 surfaces were judged later and are judge-only (so 23 % of all 729 labels are human-checked); the judge
   agreed on the exact grade for **81.4 %** and on relevant-vs-not for **91.6 %**, and was the stricter grader. The human
   grade wins wherever both exist.
 - **Metrics:** Precision@K, pooled Recall@K, NDCG@K (K = 5, 10), constraint adherence, parse micro-F1, grounding,
@@ -92,7 +91,7 @@ errors, and logs each call. Over the whole project the pipeline used 61 Flash-Li
 | S6 personalized | 0.79 | 0.71 [0.55, 0.87] | 1.00 |
 
 Paired differences in NDCG@10: S1 → S3 **+0.25 [0.05, 0.48]**; S3 → S5 +0.09 [−0.14, 0.34]; S4 → S5 **0.00**;
-S5 → S5x +0.01 [0.00, 0.04]; S5 → S6 −0.03 [−0.04, −0.01] (section 6.3). With 15 queries these are indicative, not significance claims.
+S5 → S5x +0.01 [0.00, 0.04]; S5 → S6 −0.02 [−0.04, −0.01] (section 6.3). With 15 queries these are indicative, not significance claims.
 
 - **Semantic retrieval** gives the clearest gain, and the only interval that excludes zero.
 - **Filters** guarantee the limits (adherence 1.00), and raise relevance on average, but the interval spans zero:
@@ -116,9 +115,9 @@ Dev F1 went from 0.80 (first prompt) to 1.00 (final prompt) through tuning on de
   interactions only (an earlier version counted the held-out purchase too; the verifier caught it and it was fixed).
 - **Experiment A (query relevance, 8 users with 10+ interactions, test queries):** personalization changes the
   results (Kendall tau 0.80 over the pool, 80 % of the top 10 kept) and costs a little relevance: NDCG@10 drops by
-  **−0.026 [−0.044, −0.007]** (averaged over users, then queries; −0.026 [−0.043, −0.009] in the paired table), and all 8
+  **−0.026 [−0.044, −0.007]** (averaged over users, then queries; −0.024 [−0.042, −0.007] in the paired table), and all 8
   users are slightly negative (−0.014 to −0.038). Of 104 (user, query) pairs, 48 lose, 43 are unchanged and 13 gain;
-  the largest losses are q10 and q19 (−0.08) and q02 (−0.06). Precision@10 barely moves (−0.006 [−0.023, 0.008]), so S6
+  the largest losses are q10 and q19 (−0.08) and q02 (−0.06). Precision@10 barely moves (−0.001 [−0.015, 0.010]), so S6
   keeps the relevant products but ranks some of them lower. The spec expected a small or neutral effect: it is small
   and negative. On dev the same weights gave +0.02, so 10 dev queries were a weak guide here. Combined with experiment B, personalization helps predict what a user buys next but does not help a user
   who has stated what they want.

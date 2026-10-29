@@ -11,6 +11,6 @@ q15,descriptive,make chewable nugget ice at home for parties,1.0,1.0,0.956458700
 q17,descriptive,replacement wick filter for my bedroom humidifier,0.4814185519599552,0.4814185519599552,0.5138417931270186,True,semantic retrieval failure,0
 q19,negation,portable ice maker that is not stainless steel,0.09578105912639354,0.7401236606023353,0.6629884167967678,False,,1
 q20,negation,reusable coffee filter without paper,0.09478836436955079,1.0,0.992047401475131,False,,0
-q22,exact_term,W10425238 drain pump,0.5969021808827255,0.5969021808827255,0.5635339414723523,False,,0
+q22,exact_term,W10425238 drain pump,0.5969021808827255,0.5969021808827255,0.5896527520997965,False,,0
 q24,no_result,Bosch countertop dishwasher,0.8995023444012692,0.0,0.0,False,catalog gap,5
 q25,no_result,LG freezer under $50,,,,False,catalog gap,0
