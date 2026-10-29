@@ -305,7 +305,10 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
             seen_deliveries[(store, delivery)] = None
             while len(seen_deliveries) > 5000:
                 seen_deliveries.popitem(last=False)
-        return {"status": "not_found" if (log or {}).get("not_found") else "updated"}
+        log = log or {}
+        if log.get("not_found"):
+            return {"status": "not_found"}
+        return {"status": "stale" if log.get("stale") and not log.get("applied") else "updated"}
 
     @app.get("/widget.js")
     def widget() -> FileResponse:

@@ -107,7 +107,8 @@ def flatten_shopify(product: dict) -> dict:
     if isinstance(tags, str):                      # webhooks send "a, b"; products.json a list: same text either way
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     known = [bool(v["available"]) for v in variants if v.get("available") is not None]
-    return {**{k: product.get(k) for k in ("id", "handle", "title", "vendor", "product_type", "body_html")},
+    return {**{k: product.get(k) for k in ("id", "handle", "title", "vendor", "product_type", "body_html",
+                                                        "updated_at")},
             "price": variants[0].get("price"), "tags": "; ".join(tags) if isinstance(tags, list) else tags,
             "available": any(known) if known else None}       # in stock when any variant can be bought
 
@@ -229,6 +230,7 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
             raise ValueError(f"unknown field {field!r}; expected one of {FIELDS + list(OPTIONAL_FIELDS)}")
         columns[field] = [column]
     columns["source_id"] = ["id", "ID"]                 # the platform's own id (webhook deletes carry only this)
+    columns["source_updated_at"] = ["updated_at", "date_modified_gmt"]   # when the platform last changed it
     missing = [f for f in ("product_id", "title") if not any(c in feed.columns for c in columns[f])]
     if missing:
         raise ValueError(f"feed has no column for {missing}; columns are {list(feed.columns)}; pass a mapping")
@@ -252,6 +254,7 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     df["rating_count"] = counts.fillna(0).clip(lower=0).astype(int)      # odd values (text, inf) count as 0
     df["product_id"] = df["product_id"].map(_clean_id)
     df["source_id"] = pick("source_id").map(_clean_id)
+    df["source_updated_at"] = pd.to_datetime(pick("source_updated_at"), errors="coerce", utc=True)
     df["in_stock"] = row_stock(feed, preset, (mapping or {}).get("in_stock"))
     stock_by_id = df.groupby("product_id")["in_stock"].agg(_any_stock)        # before variant rows are dropped
     for field in ("title", "description", "features", "brand"):
@@ -399,7 +402,26 @@ def woocommerce_webhook_feed(product: dict) -> pd.DataFrame:
         "Sale price": str(product.get("sale_price") or ""), "Categories": names(product.get("categories")),
         "Tags": names(product.get("tags")), "In stock?": stock, "Brands": names(product.get("brands")),
         "average_rating": product.get("average_rating"), "rating_count": product.get("rating_count"),
+        "date_modified_gmt": product.get("date_modified_gmt"),
         "Published": "1" if product.get("status") == "publish" else "0"}])
+
+
+def drop_stale(new: pd.DataFrame, catalog: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Skip webhook rows that are not newer than the stored version (by the platform's updated_at, which is inside
+    the signed body): a replayed or out-of-order delivery cannot bring back an old price or stock state."""
+    if new.empty or "source_updated_at" not in catalog or "source_updated_at" not in new:
+        return new, []
+    stored = pd.to_datetime(catalog["source_updated_at"], errors="coerce", utc=True)
+    by_id = dict(zip(catalog["product_id"], stored))
+    by_sid = dict(zip(catalog["source_id"].astype(str), stored)) if "source_id" in catalog else {}
+    stale = []
+    for i, row in new.iterrows():
+        before = by_id.get(row["product_id"])
+        if before is None or pd.isna(before):
+            before = by_sid.get(str(row.get("source_id")))
+        if before is not None and pd.notna(before) and pd.notna(row["source_updated_at"])                 and row["source_updated_at"] <= before:
+            stale.append(row["product_id"])
+    return new[~new["product_id"].isin(stale)], stale
 
 
 def keep_known_fields(new: pd.DataFrame, catalog: pd.DataFrame, same_source: bool) -> pd.DataFrame:
@@ -453,12 +475,13 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
             raw_ids = {str(_clean_id(v)) for c in ("id", "ID", "handle", "Handle", "SKU", "product_id")
                        if c in feed for v in feed[c] if _clean_id(v) is not None}
             gone |= raw_ids - set(new["product_id"]) - set(new["source_id"].dropna())
+            new, log["stale"] = drop_stale(new, catalog)
             new = keep_known_fields(new, catalog, same_source=fmt == own)
         pid, sid = catalog["product_id"].astype(str), catalog["source_id"].astype(str)
         new_ids, new_sids = set(new["product_id"]), set(new["source_id"].dropna().astype(str))
         drop = pid.isin(gone | new_ids) | sid.isin(gone | new_sids)      # also a product renamed (same platform id)
         unmatched = [str(i) for i in delete_ids if not (pid == str(i)).any() and not (sid == str(i)).any()]
-        log["not_found"] = []
+        log["not_found"], log["applied"] = [], len(new)
         if unmatched and own in ("shopify", "shopify_json") and log.get("site"):
             try:                                          # a delete carries only Shopify's id: ask the live store
                 live = fetch_products_json(shopify_feed_url(log["site"]))
