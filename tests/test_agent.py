@@ -126,3 +126,21 @@ def test_conversation_evaluation_scores_actions_and_limits(tmp_path):
     df = evaluate_conversations(res, conv)
     assert df.action_ok.tolist() == [True, True] and df.gold_ok.tolist()[0] is True
     assert df.grounded.all() and not df.tool_fallback.any()
+
+
+# ---- 29 Oct, scripted conversations v1: the LLM dropped an earlier "not stainless" when refining --------------
+
+def test_refining_keeps_earlier_limits_unless_removed_or_a_new_search(tmp_path):
+    state = ChatState(limits={"semantic_query": "ice maker", "brand": "GE", "exclude_terms": ["maker b"]})
+    res = agent_res(tmp_path, [call("search", request="ice maker", max_price=110),                     # omits brand
+                               call("search", request="ice maker", remove_limits=["brand", "max_price"]),
+                               call("search", request="range hood", new_search=True)],
+                    [gen(["A"]), gen(["A"]), gen([])])
+    refined = chat_turn("under $110", state, res)
+    assert refined.state.limits.brand == "GE" and refined.state.limits.exclude_terms == ["maker b"]
+    assert refined.state.limits.max_price == 110
+    dropped = chat_turn("any brand, any price", refined.state, res)
+    assert dropped.state.limits.brand is None and dropped.state.limits.max_price is None
+    assert dropped.state.limits.exclude_terms == ["maker b"]
+    fresh = chat_turn("show me range hoods instead", dropped.state, res)
+    assert fresh.state.limits.exclude_terms == [] and fresh.state.limits.brand is None

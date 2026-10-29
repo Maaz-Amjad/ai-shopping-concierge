@@ -145,3 +145,9 @@ def test_validator_catches_brands_spelled_lowercase_or_with_digits():
     for brand in ("mDesign", "77L"):
         a = answer(f"Try the {brand} one.", [("B1", "Quiet.")])
         assert validate_answer(a, items(), set(), BRANDS + [brand]) == [f"brand {brand} is not in the product data"]
+
+
+def test_validator_ignores_one_letter_and_all_lowercase_word_brands():
+    # 29 Oct (chat greeting): catalog brands "I" and "part" made "How can I help with your part needs?" fail.
+    a = answer("How can I help with your part needs?", [])
+    assert validate_answer(a, items(), set(), BRANDS + ["I", "part"]) == []
