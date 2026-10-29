@@ -341,7 +341,11 @@ capped at 2 MB, unknown stores answer like a bad signature, API keys are checked
 address behind a proxy is the one the proxy added, a renamed product replaces its old entry, fields a webhook does not
 carry (brand, ratings, a CSV store's category) keep their stored values, a Shopify delete for a store imported from a
 CSV is resolved against the live store when its address is known, and a lock file keeps the API, the scheduled refresh
-and the app from writing a store at the same time. Webhooks are paired with the scheduled refresh (daily is enough),
+and the app from writing a store at the same time. Each product also keeps the platform's last-changed time (inside
+the signed body): an older update or "unpublish" is skipped, deleted products are remembered for 30 days so a late
+update cannot bring them back, and a refresh (possibly from a cached snapshot) never replaces a product a newer webhook
+already updated; WooCommerce delete messages carry no time, so a delete arriving after a restore still removes the
+product until the next refresh. Webhooks are paired with the scheduled refresh (daily is enough),
 because a missed or out-of-order delivery is only corrected by the next full read. A key placed in a public web page
 is visible to anyone, so for the browser widget the rate limit and the origin allow-list remain the real protection.
 
@@ -361,7 +365,10 @@ NDCG@10 against TF-IDF's 0.40 in section 6.1). Inside the same hard-filter mask,
 On products that have relevance labels, hybrid retrieval ranks better on both splits, and the part-number query on
 test becomes perfect; the interval still includes zero, so the gain is indicative. Counting unlabelled products as not
 relevant gives a small loss instead, because keyword matching brings in products no earlier system retrieved (12 % of
-the test top 10). The two readings bracket the truth; judging those products with the LLM judge would settle it. The
+the test top 10). The selection leans on this: the unjudged share grows with a, the judged-only reading (which closes
+the gaps they leave) rose with it while the plain reading fell, so the rule tends to pick the largest a. Neither
+reading is guaranteed to be right; judging the new products with the LLM judge settles it. The "cosine" shown per
+product stays the true cosine; the blended score only sets the order. The
 chosen a sits at the edge of the grid, so a larger value was not tried. BM25 adds about 12 ms per query (p95 29 ms) and
 1.3 s to load a 10,000-product store. The app, API, chat and MCP server use a = 0.5 (`app.retrieval`); every
 benchmark table above keeps pure dense retrieval. Reproduce with `python -m src.evaluate hybrid --split dev|test`.

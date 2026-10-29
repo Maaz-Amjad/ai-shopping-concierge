@@ -35,7 +35,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
 | 13.3 Smaller personal weight for requests with limits | done, kept off: dev chose no change, test disagreed (report 12.3) |
 | 13.4 API hardening, store webhooks, Dockerfile | done: rate limits, optional API keys, request log, signed Shopify/WooCommerce webhooks |
-| 13.5 Hybrid keyword + semantic retrieval | done: judged-only NDCG@10 +0.044 [-0.010, +0.109] on test (indicative), part-number query 0.60 -> 1.00; used by the app |
+| 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.044 [-0.010, +0.109] on judged products but -0.025 counting the 12% unjudged as irrelevant; part-number query 0.60 -> 1.00; used by the app |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -137,7 +137,10 @@ because Docker is not installed on the development machine); put an HTTPS revers
 create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update
 or remove that one product (only it is re-embedded). WooCommerce: paste the store's webhook secret (`--secrets`) into
 the webhook form. Shopify signs with its own key: save it with `--set-webhook-secret KEY` or in the app (*Add your
-store → Instant updates*). Keep a daily `--refresh` as the safety net for missed or out-of-order deliveries. Shopify
+store → Instant updates*). Each product keeps the platform's `updated_at` (inside the signed body): an older update
+is skipped, deleted products are remembered for 30 days so a late update cannot bring them back, and a refresh never
+replaces a product a newer webhook already updated (limit: WooCommerce delete messages carry no time). Keep a daily
+`--refresh` as the safety net for missed deliveries. Shopify
 delete messages carry only Shopify's numeric id: for a store imported from a CSV export, give the store's address when
 importing so deletes can be checked against the live store (otherwise they are reported as `not_found` until the
 next import). Bodies over 2 MB are refused; webhooks have their own rate limit (600 a minute).
