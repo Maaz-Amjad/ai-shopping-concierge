@@ -1,0 +1,29 @@
+conversation,turn,message,expected,action,action_ok,products,gold_ok,cheaper_ok,no_price_limit_ok,no_brand_ok,grounded,tool_fallback,limits,text
+h01,1,"a washer drain pump, not Samsung",search,search,True,5,True,,,,True,False,"{""semantic_query"": ""washer drain pump"", ""max_price"": null, ""min_price"": null, ""category"": null, ""brand"": null, ""exclude_terms"": [""samsung""]}","Here are washer drain pump options available in the catalog.
+1. [2023 UPGRADED]W10536347 W10155921 W10049390 Washer Drain Pump by Beaquicy with ... ($23.67): Beaquicy W10536347 washer drain pump priced at $23.67.
+2. Washer Drain Pump 137221600, 137108100, 134051200 (not listed): LinkEZ washer drain "
+h01,2,under $50 please,search,search,True,5,True,,,,True,False,"{""semantic_query"": ""washer drain pump"", ""max_price"": 50.0, ""min_price"": null, ""category"": null, ""brand"": null, ""exclude_terms"": [""samsung""]}","Here are the best washer drain pump options available within your criteria.
+1. [2023 UPGRADED]W10536347 W10155921 W10049390 Washer Drain Pump by Beaquicy with ... ($23.67): Beaquicy washer drain pump priced at $23.67.
+2. ERP W10661045 Washer Drain Pump ($32.00): ERP washer drain pump priced at $32.0"
+h01,3,only the LG ones,search,search,True,5,True,,,,True,False,"{""semantic_query"": ""washer drain pump"", ""max_price"": 50.0, ""min_price"": null, ""category"": null, ""brand"": ""LG"", ""exclude_terms"": [""samsung""]}","We found several matching washer drain pump options and related parts for your request.
+1. LG Electronics 4681EA1007G Washing Machine Drain Pump and Motor Assembly ($47.65): LG Washing Machine Drain Pump and Motor Assembly available for $47.65.
+2. LG 4681EA2001T Genuine OEM Drain Pump Assembly for L"
+h02,1,"Frigidaire ice maker, under $300",search,search,True,5,True,,,,True,False,"{""semantic_query"": ""ice maker"", ""max_price"": 300.0, ""min_price"": null, ""category"": null, ""brand"": ""FRIGIDAIRE"", ""exclude_terms"": []}","Here are the best ice maker options available from FRIGIDAIRE.
+1. FRIGIDAIRE EFIC189-Silver Compact Ice Maker, 26 lb per Day, Silver ... ($85.27): Compact silver ice maker producing 26 lbs per day for $85.27.
+2. Frigidaire EFIC118-SILVER-KL Ice Maker Machine, Compact Countertop, Silver ($119.99): Si"
+h02,2,now show me range hoods instead,search,search,True,5,,,True,True,True,False,"{""semantic_query"": ""range hoods"", ""max_price"": null, ""min_price"": null, ""category"": null, ""brand"": null, ""exclude_terms"": []}","We offer a selection of range hoods from CIARRA, FIREGAS, Heng's, GASLAND, and SNDOAS ranging in price from $81.99 to $299.99.
+1. 30 inch Range Hood with Soft Touch Control 450 CFM ... ($299.99): CIARRA wall mount range hood priced at $299.99 featuring 450 CFM suction and timer function.
+2. FIREGAS "
+h03,1,dishwasher rack wheels between $5 and $15,search,search,True,5,True,,,,True,False,"{""semantic_query"": ""dishwasher rack wheels"", ""max_price"": 15.0, ""min_price"": 5.0, ""category"": null, ""brand"": null, ""exclude_terms"": []}","We offer several dishwasher rack wheel replacements compatible with major brands like Whirlpool, KitchenAid, Bosch, and Kenmore, priced between $7.95 and $12.99.
+1. Kitchenaid Dishwasher Rack Wheels WPW10195417 W10195417 Whirlpool Dishwasher Wheels Lower ... ($11.95): An exact equivalent for part WP"
+h03,2,save 1 and 2,save,save,True,0,,,,,True,False,"{""semantic_query"": ""dishwasher rack wheels"", ""max_price"": 15.0, ""min_price"": 5.0, ""category"": null, ""brand"": null, ""exclude_terms"": []}","Saved “Kitchenaid Dishwasher Rack Wheels WPW10195417 W10195417 Whir”, “Upgrade 8 Pack 165314 Dishwasher Lower Rack Wheels by Beaqui” to your shortlist. You have 2 saved."
+h03,3,compare my first two saved ones,compare|show_shortlist|ask,compare,True,0,,,,,True,False,"{""semantic_query"": ""dishwasher rack wheels"", ""max_price"": 15.0, ""min_price"": 5.0, ""category"": null, ""brand"": null, ""exclude_terms"": []}","Here are products 1, 2 side by side, using the store's own product details. Number 2 is the cheapest."
+h03,4,remove number 2 from my list,remove,remove,True,1,,,,,True,False,"{""semantic_query"": ""dishwasher rack wheels"", ""max_price"": 15.0, ""min_price"": 5.0, ""category"": null, ""brand"": null, ""exclude_terms"": []}",Removed 1 from your shortlist; 1 left.
+h04,1,Whirlpool dryer belt,search,search,True,5,True,,,,True,False,"{""semantic_query"": ""dryer belt"", ""max_price"": null, ""min_price"": null, ""category"": null, ""brand"": ""Whirlpool"", ""exclude_terms"": []}","Here are several Whirlpool dryer belt options available in the catalog.
+1. Whirlpool Y312959 Dryer Belt ($13.55): Whirlpool Y312959 Dryer Belt for $13.55.
+2. Whirlpool 341241 Dryer Drum Belt, White ($12.58): Whirlpool 341241 Dryer Drum Belt for $12.58.
+3. Whirlpool 33002535 Dryer Belt (not listed): "
+h04,2,"any brand, but nothing above $12",search,search,True,5,True,,,True,True,False,"{""semantic_query"": ""dryer belt"", ""max_price"": 12.0, ""min_price"": null, ""category"": null, ""brand"": null, ""exclude_terms"": []}","We offer several compatible dryer belts priced at $7.99 to $9.95 to help restore your dryer drum rotation.
+1. (𝟮𝟬𝟮𝟯 𝙐𝙥𝙜𝙧𝙖𝙙𝙚𝙙)341241 Dryer Drum Drive Belt by Beaquicy - Replacement ... ($7.99): Beaquicy replacement dryer drum belt priced at $7.99.
+2. 341241 Dryer Drum Belt - Exact fit for Whirlpool &"
+h04,3,what's the cheapest of these?,ask|compare|search,compare,True,0,,,,,True,False,"{""semantic_query"": ""dryer belt"", ""max_price"": 12.0, ""min_price"": null, ""category"": null, ""brand"": null, ""exclude_terms"": []}","Here are products 3, 4 side by side, using the store's own product details. Number 3 is the cheapest."

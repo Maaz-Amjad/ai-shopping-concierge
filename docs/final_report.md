@@ -185,15 +185,15 @@ local CPU instead of Colab; a separate "price not listed" list for unpriced matc
 judged-only metrics for unpooled comparisons; S6 items judged in separate batches; the validator's brand rule extended to
 compatibility wording and user-named brands; the error-analysis tag *catalog gap* also covers "fewer than 10 products
 satisfy the parsed limits" (no missing-description check, because cleaning already drops near-empty listings); rendered titles shortened to 10
-words; Streamlit and MCP wrapper cut
-(pre-agreed cut list).
+words; Streamlit and MCP wrapper first cut (pre-agreed cut list), then built after the evaluation was complete, together
+with a store connector, a chat assistant and other LLM providers (section 11, approved additions).
 
 ## 10. Reproducibility
 
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 176 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 195 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -205,6 +205,35 @@ and a two-line drop-in search widget); and an MCP server exposing `search_produc
 agents. Imported stores have no interaction history, so their shoppers are cold-start; a store with no sales data gets
 a popularity score of 0 (testing the connector exposed a division by zero there, fixed with a failing test first). The
 benchmark results above are for the Appliances catalog only; other stores were tested for function, not relevance.
+
+**Chat assistant.** A conversational layer (`src/agent.py`) sits on top of the same pipeline, in the demo app and as a
+website chat bubble. Each turn, the LLM chooses one of eight actions by function calling (search or refine, compare,
+similar, save, remove, show shortlist, buy link, ask a question) and Python validates the arguments and runs the
+action, so the rule "the LLM extracts, Python enforces" still holds: limits go through the same catalog validation and
+hard filters, every answer goes through the grounding validator, and the conversation state the client sends back is
+re-validated each turn. The assistant never places orders; "buy" returns the product page. It was evaluated on scripted
+conversations, each turn checked for the expected action, the gold limits (price, brand, "not X"), refinements
+(cheaper, a dropped price limit, a dropped brand) and grounding:
+
+| Run | Turns | Right action | Gold limits | Refinements | Grounded |
+|---|---|---|---|---|---|
+| v1, 10 conversations | 29 | 29/29 | 9/10 | 3/3 | 28/29 |
+| v2, same 10 conversations | 29 | 29/29 | 10/10 | 3/3 | 29/29 |
+| v2, 4 held-out conversations | 12 | 12/12 | 7/7 | 3/3 | 12/12 |
+
+v1 exposed two faults. Asked "under $400" after "not stainless steel", the LLM restated the limits and dropped the
+exclusion; v2 has the LLM return only what changed (plus explicit "remove" and "new search" signals) and merges the
+earlier limits in Python. The validator also flagged a greeting because "I" and "part" are brand names in the catalog;
+one-letter brands and all-lowercase brands written in lowercase are no longer counted as mentions (the generation
+benchmark was re-run and is unchanged). Both fixes were made test-first. The held-out conversations were written and
+committed before the fix and were not used to tune it. With 41 turns these results show the design works; they are not
+a precise success rate.
+
+**Other LLM providers.** `src/llm.py` has adapters for Gemini (default), any OpenAI-compatible endpoint (ChatGPT, or
+open-weight models served by Ollama, vLLM or LM Studio) and Anthropic's Claude, selected in `config.yaml`. Caching, call
+caps, retries, structured output and function calling behave the same for every provider. The adapters are tested
+offline only; all reported results are Gemini results, and other models may parse and answer differently. One
+difference is known: the Claude adapter sends no temperature setting, so fresh calls are not strictly deterministic and repeatability comes from the response cache.
 
 ## 12. Future work
 
