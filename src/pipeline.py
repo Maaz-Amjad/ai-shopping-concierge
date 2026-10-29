@@ -12,7 +12,7 @@ import pandas as pd
 from src import ROOT, load_config, set_seed
 from src.filters import relaxation_suggestions
 from src.generate import MAX_WORDS, GenerationResult, answer_text, generate_answer, unpriced_section
-from src.llm import LLMClient
+from src.llm import LLMClient, provider_settings
 from src.parse import CatalogMeta, ParsedQuery, parse_query, validate
 from src.personalize import Weights, build_profiles, rank
 from src.retrieve import DenseIndex, retrieve
@@ -54,6 +54,7 @@ def load_resources(cfg: dict | None = None, max_calls: int | None = None, store:
         raise ValueError("embeddings are not aligned with the catalog; rebuild with python -m src.embed")
     llm = cfg["llm"]
     client = LLMClient(llm["model"], ROOT / llm["cache_path"], ROOT / llm["call_log_path"], rpm=llm["rpm"],
+                       **provider_settings(llm),
                        temperature=llm["temperature"], max_output_tokens=llm["max_output_tokens"],
                        max_calls=max_calls)
     brands = sorted(catalog["brand"].dropna().astype(str).unique().tolist())

@@ -24,3 +24,6 @@ streamlit==1.66.1
 fastapi==0.162.0
 uvicorn==0.54.0
 mcp==2.3.0
+# Phase 12: other LLM providers (ChatGPT / open-weight via OpenAI-compatible servers, Claude)
+openai==3.41.0
+anthropic==2.3.0

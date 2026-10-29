@@ -14,7 +14,7 @@ query -> LLM query parsing (Gemini) -> catalog-validated hard filters (Python)
 
 ## Status
 
-Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be summarized in the final report.
+Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be summarized in the final report.
 
 | Phase | State |
 |---|---|
@@ -30,6 +30,7 @@ Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be 
 | 9 Test-set evaluation: [04_evaluation](notebooks/04_evaluation.ipynb) | done |
 | 10 [Final report](docs/final_report.md) | done |
 | 11 Demo app, store connector (API + widget), MCP server: `app/`, `src/store.py` | done |
+| 12 Shopping chat agent (`src/agent.py`), website chat bubble, any LLM provider (`src/llm.py`) | done |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -65,12 +66,15 @@ with 95% bootstrap confidence intervals.
 - Grounding: 22/22 answers grounded, 0 invented product IDs. Retrieval p95 11 ms; LLM generation p95 12.7 s (6 s
   end-to-end target not met on the free tier).
 
-## Try it: demo app, store connector, MCP server
+## Try it: demo app, chat assistant, store connector, MCP server
 
-After setup (below), three ways to use the concierge, all read-only and built on the same `src/pipeline.py`:
+After setup (below), the concierge can be used in four ways, all read-only and built on the same `src/pipeline.py`:
 
-**Demo app (Streamlit).** Type a request, pick a new or returning shopper, and see the enforced limits, the ranked
-products with their score components, similar products, and the grounded answer.
+**Demo app (Streamlit), no commands needed after starting it.** The *Chat* tab is a shopping assistant: ask for
+products, then refine ("cheaper", "only GE", "not stainless"), compare ("compare 1 and 2"), find similar items, keep
+a shortlist, and get the product page to buy (no orders are placed). The *Shop* tab is single-shot search with the
+enforced limits, score components and the grounded answer. The *Add your store* tab imports a store, turns the website
+connection on and off, and connects Claude Desktop, all with buttons.
 
 ```bash
 .venv/Scripts/python.exe -m streamlit run app/streamlit_app.py
@@ -91,8 +95,11 @@ paste two lines into any page:
 <script src="http://localhost:8000/widget.js" data-store="mystore"></script>
 ```
 
+This adds a floating chat bubble (the shopping assistant); add `data-mode="search"` for a plain search box instead.
+
 Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
-(`product_id,title,brand,category,price,description,features`). API: `POST /search`, `GET /similar/{id}`,
+(`product_id,title,brand,category,price,description,features`). API: `POST /search`, `POST /chat` (one chat turn; the
+client sends back the returned state), `POST /chat/action` (card buttons, no LLM call), `GET /similar/{id}`,
 `GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in
 `stores/` (not committed); their shoppers have no history, so personalization is off for them. Browsers may call the
 API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIERGE_ALLOWED_ORIGINS`
@@ -100,13 +107,19 @@ API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIE
 calls (default 300), then answers from catalog fields only. The API listens on localhost; put it behind a proxy with
 authentication before exposing it.
 
-**MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). For Claude Desktop or
-Claude Code, add:
+**MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). The app's *Connect to
+Claude Desktop* button sets it up; by hand, add:
 
 ```json
-{"mcpServers": {"shopping-concierge": {"command": "<project>/.venv/Scripts/python.exe",
-  "args": ["-m", "app.mcp_server"], "cwd": "<project>", "env": {"CONCIERGE_STORE": "mystore"}}}}
+{"mcpServers": {"shopping-assistant-mystore": {"command": "<project>/.venv/Scripts/python.exe",
+  "args": ["<project>/app/mcp_server.py"], "env": {"CONCIERGE_STORE": "mystore"}}}}
 ```
+
+**Any LLM provider.** Gemini is the default (and the reported results are Gemini results). Set `llm.provider` in
+`config.yaml` to `openai` for ChatGPT, to `openai` with a `base_url` for open-weight models served by Ollama, vLLM,
+LM Studio and similar OpenAI-compatible servers, or to `anthropic` for Claude, and set `llm.model` / `llm.judge_model`.
+Keys go in `.env` as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` (a local open-weight server needs none). Caching, call
+caps, retries, structured output and the chat agent's function calling work the same for every provider.
 
 ## Setup
 

@@ -16,7 +16,7 @@ import pandas as pd
 from pydantic import BaseModel, Field, ValidationError
 
 from src import ROOT, load_config
-from src.llm import CallLimitReached, LLMClient, QuotaExhausted
+from src.llm import CallLimitReached, LLMClient, QuotaExhausted, provider_settings
 
 # v1 -> v2 (tuned on dev only): v1 inferred "... Parts & Accessories" categories for part queries
 # (4/10 dev queries), which would drop 23% of washer drain pumps filed under "Washers & Dryers".
@@ -205,6 +205,7 @@ def parse_benchmark(split: str, limit: int | None, cfg: dict | None = None) -> p
     meta = CatalogMeta.from_catalog(load_catalog())
     llm = cfg["llm"]
     client = LLMClient(llm["model"], ROOT / llm["cache_path"], ROOT / llm["call_log_path"], rpm=llm["rpm"],
+                       **provider_settings(llm),
                        temperature=llm["temperature"], max_output_tokens=llm["max_output_tokens"],
                        max_calls=limit)
     queries = pd.read_csv(ROOT / "eval" / "queries.csv")

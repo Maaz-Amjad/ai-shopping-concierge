@@ -1,0 +1,41 @@
+[
+  {"id": "c01", "turns": [
+    {"message": "I'm looking for a quiet countertop ice maker under $200", "action": "search", "gold": {"max_price": 200}},
+    {"message": "cheaper", "action": "search", "cheaper": true},
+    {"message": "compare 1 and 2", "action": "compare"},
+    {"message": "save the first one", "action": "save"},
+    {"message": "I'll buy number 1", "action": "buy"}]},
+  {"id": "c02", "turns": [
+    {"message": "refrigerator water filter, only Whirlpool please", "action": "search", "gold": {"brand": "Whirlpool"}},
+    {"message": "none over $40", "action": "search", "gold": {"brand": "Whirlpool", "max_price": 40}},
+    {"message": "show me something similar to number 2", "action": "similar"}]},
+  {"id": "c03", "turns": [
+    {"message": "my dryer squeaks, what part do I need?", "action": "search"},
+    {"message": "only things under $20", "action": "search", "gold": {"max_price": 20}},
+    {"message": "save 1 and 3", "action": "save"},
+    {"message": "what's on my list?", "action": "show_shortlist"}]},
+  {"id": "c04", "turns": [
+    {"message": "range hood for a small kitchen", "action": "search"},
+    {"message": "between $100 and $300", "action": "search", "gold": {"min_price": 100, "max_price": 300}},
+    {"message": "actually, forget the price limit", "action": "search", "no_price_limit": true}]},
+  {"id": "c05", "turns": [
+    {"message": "hi there", "action": "ask"},
+    {"message": "I need a replacement wick filter for my humidifier", "action": "search"}]},
+  {"id": "c06", "turns": [
+    {"message": "compare 1 and 2", "action": ["compare", "ask"]},
+    {"message": "ok, show me espresso machine accessories", "action": "search"}]},
+  {"id": "c07", "turns": [
+    {"message": "a beverage fridge for cans, not stainless steel", "action": "search", "gold": {"exclude_terms": ["stainless"]}},
+    {"message": "under $400", "action": "search", "gold": {"exclude_terms": ["stainless"], "max_price": 400}}]},
+  {"id": "c08", "turns": [
+    {"message": "GE refrigerator water filter", "action": "search", "gold": {"brand": "GE"}},
+    {"message": "any brand is fine, but under $15", "action": "search", "gold": {"max_price": 15}, "no_brand": true}]},
+  {"id": "c09", "turns": [
+    {"message": "coffee machine accessories under $10", "action": "search", "gold": {"max_price": 10}},
+    {"message": "more like the first one", "action": "similar"},
+    {"message": "save 2", "action": "save"},
+    {"message": "remove it from my list", "action": "remove"}]},
+  {"id": "c10", "turns": [
+    {"message": "something for my washer", "action": ["ask", "search"]},
+    {"message": "it won't drain, I think I need the pump part", "action": "search"}]}
+]

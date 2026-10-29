@@ -210,3 +210,26 @@ def test_concurrent_calls_respect_the_call_cap_and_keep_the_cache_valid(tmp_path
     assert client.calls_made == 2 and results.count("ok") == 2 and results.count("capped") == 6
     lines = (tmp_path / "c.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2 and all(json.loads(line)["response"] == "ok" for line in lines)
+
+
+TOOLS = [{"name": "search", "description": "find products", "parameters": {"type": "object", "properties": {
+    "query": {"type": "string"}}, "required": ["query"]}}]
+
+
+def test_tool_calls_are_cached_and_validated(tmp_path):
+    llm._last_call_at.clear()
+    calls = []
+
+    def tool_transport(model, prompt, tools, temperature, max_tokens):
+        calls.append(tools)
+        return json.dumps({"name": "search", "args": {"query": "kettle"}}) if "kettle" in prompt else ""
+
+    client = LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", rpm=1e9, tool_transport=tool_transport,
+                       transport=lambda *a: "plain", sleep=lambda s: None)
+    first = client.generate_tool_call("find a kettle", "agent-v1", TOOLS)
+    again = client.generate_tool_call("find a kettle", "agent-v1", TOOLS)
+    assert first == again == {"name": "search", "args": {"query": "kettle"}} and len(calls) == 1
+    assert client.generate("find a kettle", "agent-v1") == "plain"           # same prompt without tools: own key
+    with pytest.raises(ValueError, match="no valid function call"):
+        client.generate_tool_call("hello", "agent-v1", TOOLS)                 # empty response, not cached
+    assert len((tmp_path / "c.jsonl").read_text(encoding="utf-8").splitlines()) == 2

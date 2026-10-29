@@ -79,3 +79,25 @@ def test_empty_store_parameter_means_the_default_catalog(client):
     # Verifier 11b: the app's preview link for the demo store is /?store= (empty) and returned 400.
     assert client.get("/", params={"store": ""}).status_code == 200
     assert client.get("/meta", params={"store": ""}).json()["store"] == "benchmark"
+
+
+# ---- Phase 12: chat ------------------------------------------------------------------------------------
+
+def chat_client(tmp_path, tool_calls, answers):
+    from test_agent import agent_res
+
+    res = agent_res(tmp_path, tool_calls, answers)
+    return TestClient(create_app(lambda store: res))
+
+
+def test_chat_turns_carry_state_and_buttons_need_no_llm(tmp_path):
+    c = chat_client(tmp_path, [{"name": "search", "args": {"request": "ice maker", "category": "Ice Makers"}}],
+                    [gen(["A", "B"])])
+    first = c.post("/chat", json={"message": "an ice maker please"}).json()
+    assert first["action"] == "search" and [p["number"] for p in first["products"]] == [1, 2]
+    assert first["products"][0]["url"] == "https://www.amazon.com/dp/A"            # benchmark hand-off link
+    saved = c.post("/chat/action", json={"action": "save", "args": {"items": [2]}, "state": first["state"]}).json()
+    assert saved["state"]["shortlist"] == ["B"]
+    assert c.post("/chat/action", json={"action": "checkout", "state": saved["state"]}).status_code == 400
+    assert c.post("/chat", json={"message": "hi", "state": {"shown": "not a list"}}).status_code == 400
+    assert c.post("/chat", json={"message": "hi", "store": "../x"}).status_code == 400

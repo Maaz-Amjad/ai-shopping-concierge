@@ -203,7 +203,7 @@ def build_store(name: str, source: str | Path, preset: str = "generic", mapping:
 
 def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic",
                           mapping: dict[str, str] | None = None, model: Any = None, cfg: dict | None = None,
-                          source: str = "upload") -> dict:
+                          source: str = "upload", site: str | None = None) -> dict:
     """Same as build_store for a feed already read (the demo app's upload and store-link flows)."""
     from src.embed import encode_products, load_model, save_embeddings
 
@@ -218,7 +218,7 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
     out.mkdir(parents=True, exist_ok=True)
     catalog.to_pickle(out / "catalog.pkl")
     save_embeddings(emb, catalog["product_id"].tolist(), out)
-    log.update(store=name, source=source, preset=preset, mapping=mapping or {})
+    log.update(store=name, source=source, preset=preset, mapping=mapping or {}, site=site_host(site))
     (out / "import_log.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     return log
 
@@ -262,6 +262,34 @@ def shopify_feed_url(address: str) -> str:
     if not host or is_ip or "." not in host or host.endswith((".local", ".localhost", ".internal"))             or not re.fullmatch(r"[a-z0-9.-]+", host):
         raise ValueError("enter the store's public web address, e.g. mystore.com")
     return f"https://{host}/products.json"
+
+
+def site_host(address: str | None) -> str | None:
+    """'https://MyStore.com/shop' -> 'mystore.com' (None when empty or not a public domain name)."""
+    if not address or not address.strip():
+        return None
+    try:
+        return shopify_feed_url(address).removeprefix("https://").removesuffix("/products.json")
+    except ValueError:
+        return None
+
+
+def link_template(store: str | None) -> str | None:
+    """Product-page link pattern for the chat's 'buy' hand-off, e.g. 'https://shop.com/products/{id}'.
+
+    Benchmark catalog: Amazon product pages (ids are ASINs). Imported Shopify stores: /products/<handle> when the
+    store's address is known. Otherwise None (the chat then names the product instead of linking).
+    """
+    if store is None:
+        return "https://www.amazon.com/dp/{id}"
+    if not valid_store_name(store):
+        return None
+    log_path = STORES_DIR / store / "import_log.json"
+    log = json.loads(log_path.read_text(encoding="utf-8")) if log_path.exists() else {}
+    site = log.get("site") or site_host(str(log.get("source", "")))      # e.g. the Shopify address typed in
+    if site and log.get("preset") in ("shopify", "shopify_json"):
+        return f"https://{site}/products/{{id}}"
+    return None
 
 
 def list_stores() -> list[str]:

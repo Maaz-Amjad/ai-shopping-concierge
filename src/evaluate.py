@@ -543,11 +543,11 @@ def merge_qrels(labels: pd.DataFrame, manual: pd.DataFrame) -> pd.DataFrame:
 
 
 def judge_client(cfg: dict, limit: int | None) -> Any:
-    from src.llm import LLMClient
+    from src.llm import LLMClient, provider_settings
 
     llm = cfg["llm"]
     return LLMClient(llm["judge_model"], ROOT / llm["cache_path"], ROOT / llm["call_log_path"],
-                     rpm=llm["judge_rpm"], temperature=llm["temperature"],
+                     **provider_settings(llm), rpm=llm["judge_rpm"], temperature=llm["temperature"],
                      max_output_tokens=llm["judge_max_output_tokens"], max_calls=limit)
 
 

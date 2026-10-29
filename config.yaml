@@ -4,6 +4,12 @@ embedding: {model: BAAI/bge-small-en-v1.5, query_instruction: true, batch_size: 
 retrieval: {mode: filter_first, k0: 100, k_max: 1000, pool_size: 200}
 ranking: {w_sem: 0.7, w_pers: 0.25, w_pop: 0.05}
 llm:
+  # provider: gemini | openai | anthropic. Reported results use gemini; switch here to run on another model.
+  #   ChatGPT:      provider: openai, model: <an OpenAI model>, key OPENAI_API_KEY in .env
+  #   Open-weight:  provider: openai, base_url: http://localhost:11434/v1 (Ollama; vLLM/LM Studio similar),
+  #                 model: <e.g. llama3.1>, no key needed for a local server
+  #   Claude:       provider: anthropic, model: <e.g. claude-haiku-5-5>, key ANTHROPIC_API_KEY in .env
+  #   (set judge_model too; optional api_key_env overrides the key variable name)
   provider: gemini
   model: gemini-3.5-flash-lite        # parser and generator
   judge_model: gemini-3.8-flash       # relevance judge (must differ from generator)

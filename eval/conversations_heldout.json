@@ -1,0 +1,18 @@
+[
+  {"id": "h01", "turns": [
+    {"message": "a washer drain pump, not Samsung", "action": "search", "gold": {"exclude_terms": ["samsung"]}},
+    {"message": "under $50 please", "action": "search", "gold": {"exclude_terms": ["samsung"], "max_price": 50}},
+    {"message": "only the LG ones", "action": "search", "gold": {"exclude_terms": ["samsung"], "max_price": 50, "brand": "LG"}}]},
+  {"id": "h02", "turns": [
+    {"message": "Frigidaire ice maker, under $300", "action": "search", "gold": {"brand": "FRIGIDAIRE", "max_price": 300}},
+    {"message": "now show me range hoods instead", "action": "search", "no_brand": true, "no_price_limit": true}]},
+  {"id": "h03", "turns": [
+    {"message": "dishwasher rack wheels between $5 and $15", "action": "search", "gold": {"min_price": 5, "max_price": 15}},
+    {"message": "save 1 and 2", "action": "save"},
+    {"message": "compare my first two saved ones", "action": ["compare", "show_shortlist", "ask"]},
+    {"message": "remove number 2 from my list", "action": "remove"}]},
+  {"id": "h04", "turns": [
+    {"message": "Whirlpool dryer belt", "action": "search", "gold": {"brand": "Whirlpool"}},
+    {"message": "any brand, but nothing above $12", "action": "search", "gold": {"max_price": 12}, "no_brand": true},
+    {"message": "what's the cheapest of these?", "action": ["ask", "compare", "search"]}]}
+]

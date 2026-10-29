@@ -64,10 +64,142 @@ def gemini_transport(model: str, prompt: str, schema: type[BaseModel] | None,
     return response.text or ""
 
 
+def gemini_tool_transport(model: str, prompt: str, tools: list[dict], temperature: float,
+                          max_output_tokens: int) -> str:
+    """Call Gemini with function declarations and force exactly one function call (mode ANY, never executed by the
+    SDK). Returns JSON text {"name": ..., "args": {...}}; the caller validates and runs it."""
+    from dotenv import load_dotenv
+    from google import genai
+    from google.genai import types
+
+    load_dotenv(ROOT / ".env")
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+                          http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
+    declarations = [types.FunctionDeclaration(name=t["name"], description=t["description"],
+                                              parameters_json_schema=t["parameters"]) for t in tools]
+    config = types.GenerateContentConfig(
+        temperature=temperature, max_output_tokens=max_output_tokens,
+        tools=[types.Tool(function_declarations=declarations)],
+        tool_config=types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY")),
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
+    response = client.models.generate_content(model=model, contents=prompt, config=config)
+    calls = response.function_calls or []
+    if not calls:
+        return ""                                   # not cached; the caller falls back
+    return json.dumps({"name": calls[0].name, "args": dict(calls[0].args or {})}, ensure_ascii=False)
+
+
+# ---- other providers: OpenAI-compatible (ChatGPT and open-weight servers) and Anthropic (Claude) ----------------
+# Same contract as the Gemini transports: plain/structured text, or one forced tool call as {"name", "args"} JSON.
+# The SDK's own retries are off (max_retries=0): LLMClient retries, caps and logs every real call itself.
+
+def _api_key(env: str | None, required: bool = True) -> str:
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
+    key = os.environ.get(env or "", "")
+    if required and not key:
+        raise RuntimeError(f"set {env} in .env to use this provider")
+    return key or "not-needed"                      # local open-weight servers usually need no key
+
+
+def openai_transports(base_url: str | None = None, api_key_env: str | None = "OPENAI_API_KEY"):
+    """ChatGPT, or any OpenAI-compatible server for open-weight models (Ollama, vLLM, LM Studio, Groq, Together...)
+    when `base_url` is set, e.g. http://localhost:11434/v1 for Ollama."""
+    def client():
+        from openai import OpenAI
+
+        return OpenAI(api_key=_api_key(api_key_env, required=base_url is None), base_url=base_url,
+                      timeout=REQUEST_TIMEOUT_MS / 1000, max_retries=0)
+
+    def transport(model: str, prompt: str, schema: type[BaseModel] | None, temperature: float,
+                  max_output_tokens: int) -> str:
+        extra = {"response_format": {"type": "json_schema", "json_schema": {
+            "name": schema.__name__, "schema": schema.model_json_schema()}}} if schema else {}
+        r = client().chat.completions.create(model=model, messages=[{"role": "user", "content": prompt}],
+                                             temperature=temperature, max_tokens=max_output_tokens, seed=42, **extra)
+        return r.choices[0].message.content or ""
+
+    def tool_transport(model: str, prompt: str, tools: list[dict], temperature: float, max_output_tokens: int) -> str:
+        r = client().chat.completions.create(
+            model=model, messages=[{"role": "user", "content": prompt}], temperature=temperature,
+            max_tokens=max_output_tokens, seed=42, tool_choice="required",
+            tools=[{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                                     "parameters": t["parameters"]}} for t in tools])
+        calls = r.choices[0].message.tool_calls or []
+        if not calls:
+            return ""
+        return json.dumps({"name": calls[0].function.name, "args": json.loads(calls[0].function.arguments or "{}")},
+                          ensure_ascii=False)
+
+    return transport, tool_transport
+
+
+def anthropic_transports(base_url: str | None = None, api_key_env: str | None = "ANTHROPIC_API_KEY"):
+    """Claude. Structured output uses a forced tool whose input schema is the expected JSON. The current API takes no
+    temperature, so repeatability on Claude comes from the response cache."""
+    def client():
+        from anthropic import Anthropic
+
+        return Anthropic(api_key=_api_key(api_key_env), base_url=base_url, timeout=REQUEST_TIMEOUT_MS / 1000,
+                         max_retries=0)
+
+    def first_tool_use(response):
+        return next((b for b in response.content if getattr(b, "type", "") == "tool_use"), None)
+
+    def transport(model: str, prompt: str, schema: type[BaseModel] | None, temperature: float,
+                  max_output_tokens: int) -> str:
+        messages = [{"role": "user", "content": prompt}]
+        if schema is None:
+            r = client().messages.create(model=model, max_tokens=max_output_tokens, messages=messages)
+            return "".join(getattr(b, "text", "") for b in r.content)
+        tool = {"name": "respond", "description": "Return the answer in this exact structure.",
+                "input_schema": schema.model_json_schema()}
+        r = client().messages.create(model=model, max_tokens=max_output_tokens, messages=messages, tools=[tool],
+                                     tool_choice={"type": "tool", "name": "respond"})
+        block = first_tool_use(r)
+        return json.dumps(block.input, ensure_ascii=False) if block else ""
+
+    def tool_transport(model: str, prompt: str, tools: list[dict], temperature: float, max_output_tokens: int) -> str:
+        r = client().messages.create(
+            model=model, max_tokens=max_output_tokens, messages=[{"role": "user", "content": prompt}],
+            tool_choice={"type": "any"},
+            tools=[{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
+                   for t in tools])
+        block = first_tool_use(r)
+        return json.dumps({"name": block.name, "args": dict(block.input or {})}, ensure_ascii=False) if block else ""
+
+    return transport, tool_transport
+
+
+PROVIDERS = ("gemini", "openai", "anthropic")
+
+
+def transports_for(provider: str = "gemini", base_url: str | None = None, api_key_env: str | None = None):
+    """(transport, tool_transport) for a provider named in config.yaml (llm.provider)."""
+    if provider == "gemini":
+        return gemini_transport, gemini_tool_transport
+    if provider == "openai":
+        return openai_transports(base_url, api_key_env or "OPENAI_API_KEY")
+    if provider == "anthropic":
+        return anthropic_transports(base_url, api_key_env or "ANTHROPIC_API_KEY")
+    raise ValueError(f"unknown llm provider {provider!r}; use one of {PROVIDERS}")
+
+
+def provider_settings(llm_cfg: dict) -> dict:
+    """LLMClient keyword arguments for the provider part of config.yaml's llm section."""
+    return {"provider": llm_cfg.get("provider", "gemini"), "base_url": llm_cfg.get("base_url"),
+            "api_key_env": llm_cfg.get("api_key_env")}
+
+
 def _error_code(exc: BaseException) -> int | None:
     """HTTP-like status code of an API error, if it has one."""
-    code = getattr(exc, "code", None)
-    return code if isinstance(code, int) else None
+    for attr in ("code", "status_code"):                # Gemini errors use .code, OpenAI/Anthropic .status_code
+        code = getattr(exc, attr, None)
+        if isinstance(code, int):
+            return code
+    return None
 
 
 def _is_daily_quota(exc: BaseException) -> bool:
@@ -90,6 +222,10 @@ class LLMClient:
         max_attempts: int = 5,
         base_delay: float = 2.0,
         transport: Transport | None = None,
+        tool_transport: Callable[..., str] | None = None,
+        provider: str = "gemini",
+        base_url: str | None = None,
+        api_key_env: str | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -102,7 +238,10 @@ class LLMClient:
         self.max_calls = max_calls
         self.max_attempts = max_attempts
         self.base_delay = base_delay
-        self.transport = transport or gemini_transport
+        default, default_tools = transports_for(provider, base_url, api_key_env)
+        self.provider = provider
+        self.transport = transport or default
+        self.tool_transport = tool_transport or default_tools
         self.sleep = sleep
         self.clock = clock
         self.calls_made = 0  # real API calls by this instance (retries included)
@@ -142,14 +281,18 @@ class LLMClient:
                 self.sleep(wait)
         _last_call_at[self.model] = self.clock()
 
-    def _call_with_backoff(self, prompt: str, schema: type[BaseModel] | None, prompt_version: str) -> str:
+    def _call_with_backoff(self, prompt: str, schema: type[BaseModel] | None, prompt_version: str,
+                           tools: list[dict] | None = None) -> str:
         for attempt in range(1, self.max_attempts + 1):
             if self.max_calls is not None and self.calls_made >= self.max_calls:
                 raise CallLimitReached(f"max_calls={self.max_calls} reached for {self.model}")
             self._wait_for_rate_limit()
             self.calls_made += 1
             try:
-                text = self.transport(self.model, prompt, schema, self.temperature, self.max_output_tokens)
+                if tools:
+                    text = self.tool_transport(self.model, prompt, tools, self.temperature, self.max_output_tokens)
+                else:
+                    text = self.transport(self.model, prompt, schema, self.temperature, self.max_output_tokens)
                 self._log_call(prompt_version, "ok")
                 return text
             except Exception as exc:  # noqa: BLE001 - classified below
@@ -158,7 +301,9 @@ class LLMClient:
                 if code == 429 and _is_daily_quota(exc):
                     raise QuotaExhausted(f"daily quota exhausted for {self.model}") from exc
                 # Dropped connections and timeouts have no status code but are transient.
-                if code not in RETRYABLE_CODES and not isinstance(exc, httpx.TransportError):
+                transient = isinstance(exc, httpx.TransportError) or type(exc).__name__ in (
+                    "APIConnectionError", "APITimeoutError")     # OpenAI/Anthropic SDK network errors
+                if code not in RETRYABLE_CODES and not transient:
                     raise
                 if attempt == self.max_attempts:
                     if code == 429:
@@ -175,14 +320,17 @@ class LLMClient:
             "model": self.model, "prompt_version": prompt_version, "status": status,
         })
 
-    def generate(self, prompt: str, prompt_version: str, schema: type[BaseModel] | None = None) -> str:
+    def generate(self, prompt: str, prompt_version: str, schema: type[BaseModel] | None = None,
+                 tools: list[dict] | None = None) -> str:
         """Return the response text for `prompt`, from cache when possible.
 
         Only usable responses are cached: empty text is never cached, and when a
         schema is given the text must validate (otherwise ValidationError is raised
-        and nothing is stored, so a rerun can recover).
+        and nothing is stored, so a rerun can recover). With `tools`, the response is
+        one forced function call as JSON (see gemini_tool_transport).
         """
-        key = self.cache_key(prompt, prompt_version, schema)
+        keyed = prompt + "\n#tools " + json.dumps(tools, sort_keys=True) if tools else prompt
+        key = self.cache_key(keyed, prompt_version, schema)
         if key in self._cache:
             self.cache_hits += 1
             return self._cache[key]
@@ -190,10 +338,11 @@ class LLMClient:
             if key in self._cache:       # another thread just fetched it
                 self.cache_hits += 1
                 return self._cache[key]
-            return self._call_and_store(key, prompt, schema, prompt_version)
+            return self._call_and_store(key, prompt, schema, prompt_version, tools)
 
-    def _call_and_store(self, key: str, prompt: str, schema: type[BaseModel] | None, prompt_version: str) -> str:
-        text = self._call_with_backoff(prompt, schema, prompt_version)
+    def _call_and_store(self, key: str, prompt: str, schema: type[BaseModel] | None, prompt_version: str,
+                        tools: list[dict] | None = None) -> str:
+        text = self._call_with_backoff(prompt, schema, prompt_version, tools)
         if schema is not None:
             schema.model_validate_json(text)  # raises ValidationError (empty text included)
         if not text.strip():
@@ -207,6 +356,15 @@ class LLMClient:
     def generate_json(self, prompt: str, prompt_version: str, schema: type[BaseModel]) -> BaseModel:
         """Generate structured output and validate it with Pydantic (raises ValidationError)."""
         return schema.model_validate_json(self.generate(prompt, prompt_version, schema))
+
+    def generate_tool_call(self, prompt: str, prompt_version: str, tools: list[dict]) -> dict:
+        """One forced function call: {"name", "args"}; ValueError when there is none or the name is unknown."""
+        text = self.generate(prompt, prompt_version, tools=tools)
+        call = json.loads(text) if text.strip() else {}
+        if call.get("name") not in {t["name"] for t in tools}:
+            raise ValueError(f"no valid function call in response: {text[:200]!r}")
+        call.setdefault("args", {})
+        return call
 
     def calls_today(self) -> int:
         """Real API calls logged for this model in the current Pacific quota day."""

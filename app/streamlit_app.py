@@ -21,9 +21,10 @@ import streamlit as st  # noqa: E402
 from app import connection  # noqa: E402
 from app.connection import add_to_claude_desktop, claude_desktop_config_path, claude_desktop_entry  # noqa: E402
 from src import load_config  # noqa: E402
+from src.agent import chat_turn, run_action  # noqa: E402
 from src.pipeline import get_similar, load_resources, result_to_dict, search_products  # noqa: E402
-from src.store import (FIELDS, STORES_DIR, build_store_from_feed, detect_preset, list_stores, read_feed,  # noqa: E402
-                       shopify_feed_url, store_name_from)
+from src.store import (FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
+                       list_stores, read_feed, shopify_feed_url, store_name_from)
 
 DEMO = "Demo appliance store"
 EXAMPLES = ["quiet portable countertop ice maker under $150", "refrigerator water filter, not Samsung",
@@ -141,7 +142,62 @@ with st.sidebar:
         f_brand = st.selectbox("Brand", ["Any"] + res.meta.prompt_brands)
     st.caption(f"{len(res.catalog):,} products · {len(res.meta.categories)} categories")
 
-shop_tab, add_tab, about_tab = st.tabs(["🔎 Shop", "🏪 Add your store", "ℹ️ How it works"])
+chat_tab, shop_tab, add_tab, about_tab = st.tabs(["💬 Chat", "🔎 Shop", "🏪 Add your store", "ℹ️ How it works"])
+
+# ---------------- chat ----------------
+with chat_tab:
+    chat_key = (store, user_id)
+    if st.session_state.get("chat_key") != chat_key:          # new shop or shopper: new conversation
+        st.session_state.update(chat_key=chat_key, chat_state=None, chat_log=[])
+    link = link_template(store)
+
+    def remember(out) -> None:
+        st.session_state["chat_state"] = out.state.model_dump()
+        st.session_state["chat_log"].append({"role": "assistant", "text": out.text, "products": out.products,
+                                             "comparison": out.comparison, "link": out.link})
+
+    top_left, top_right = st.columns([5, 1])
+    top_left.caption("Chat with the shopping assistant: ask for products, then say things like “cheaper”, "
+                     "“only GE”, “compare 1 and 2”, “save the first one” or “I'll take number 2”.")
+    if top_right.button("Start over"):
+        st.session_state.update(chat_state=None, chat_log=[])
+        st.rerun()
+    if not st.session_state["chat_log"]:
+        with st.chat_message("assistant"):
+            st.markdown("Hi! What are you shopping for today?")
+    for i, entry in enumerate(st.session_state["chat_log"]):
+        with st.chat_message(entry["role"]):
+            st.markdown(md(entry["text"]))
+            if entry.get("comparison"):
+                st.dataframe(pd.DataFrame(entry["comparison"]), hide_index=True)
+            if entry.get("link"):
+                st.link_button("Open the product page", entry["link"])
+            for p in entry.get("products") or []:
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns([6, 1, 1, 1])
+                    c1.markdown(f"**{p['number']}. {md(p['title'])}**  \n"
+                                + " · ".join(md(x) for x in [p.get("brand"), money(p.get("price"))] if x))
+                    if p.get("reason"):
+                        c1.caption(md(p["reason"]))
+                    last = i == len(st.session_state["chat_log"]) - 1          # buttons act on the latest list
+                    for col, label, name, args in ((c2, "Save", "save", {"items": [p["number"]]}),
+                                                   (c3, "Similar", "similar", {"item": p["number"]}),
+                                                   (c4, "Buy", "buy", {"item": p["number"]})):
+                        if col.button(label, key=f"{name}-{i}-{p['number']}", disabled=not last):
+                            remember(run_action(name, args, st.session_state["chat_state"], res, n=n, link=link))
+                            st.rerun()
+    shortlist = (st.session_state.get("chat_state") or {}).get("shortlist") or []
+    if shortlist:
+        with st.expander(f"Your shortlist ({len(shortlist)})"):
+            for j, pid in enumerate(shortlist, start=1):
+                row = res.catalog[res.catalog["product_id"] == pid].iloc[0]
+                st.markdown(f"{j}. {md(str(row['title'])[:90])} — {money(None if pd.isna(row['price']) else row['price'])}")
+    message = st.chat_input("Message the shopping assistant")
+    if message:
+        st.session_state["chat_log"].append({"role": "user", "text": message})
+        with st.spinner("Thinking…"):
+            remember(chat_turn(message, st.session_state["chat_state"], res, user_id=user_id, n=n, link=link))
+        st.rerun()
 
 # ---------------- shop ----------------
 with shop_tab:

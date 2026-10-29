@@ -14,11 +14,12 @@ from typing import Callable
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src import load_config
 from src.pipeline import Resources, get_similar, load_resources, records, result_to_dict, search_products
-from src.store import STORES_DIR, valid_store_name
+from src.agent import chat_turn, run_action
+from src.store import STORES_DIR, link_template, valid_store_name
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -32,6 +33,22 @@ class SearchRequest(BaseModel):
     min_price: float | None = None
     category: str | None = None
     brand: str | None = None
+
+
+class ChatRequest(BaseModel):
+    message: str = Field("", max_length=2000)
+    store: str | None = None
+    user_id: str | None = None
+    n: int = Field(5, ge=1, le=10)
+    state: dict | None = None          # returned by the previous turn; validated again on the server
+
+
+class ChatAction(BaseModel):
+    action: str                        # save | similar | buy | remove | show_shortlist (buttons; no LLM call)
+    args: dict = Field(default_factory=dict)
+    store: str | None = None
+    n: int = Field(5, ge=1, le=10)
+    state: dict | None = None
 
 
 def store_version(store: str | None) -> float:
@@ -89,6 +106,28 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         out = search_products(req.query, res, max_price=req.max_price, min_price=req.min_price,
                               category=req.category, brand=req.brand, n=req.n, user_id=req.user_id)
         return result_to_dict(req.query, out, res)
+
+    @app.post("/chat")
+    def chat(req: ChatRequest) -> dict:
+        """One chat turn: the LLM chooses an action, Python validates and runs it (src/agent.py)."""
+        store = req.store or None
+        res = resources(store)
+        try:
+            out = chat_turn(req.message, req.state, res, user_id=req.user_id, n=req.n, link=link_template(store))
+        except ValidationError:
+            raise HTTPException(400, "invalid chat state") from None
+        return out.to_dict()
+
+    @app.post("/chat/action")
+    def chat_action(req: ChatAction) -> dict:
+        """A card button (Save / Similar / Buy): runs directly, no LLM call."""
+        store = req.store or None
+        res = resources(store)
+        try:
+            out = run_action(req.action, req.args, req.state, res, n=req.n, link=link_template(store))
+        except (ValueError, ValidationError) as exc:
+            raise HTTPException(400, str(exc).splitlines()[0][:200]) from None
+        return out.to_dict()
 
     @app.get("/similar/{product_id}")
     def similar(product_id: str, store: str | None = None, n: int = Query(5, ge=1, le=20)) -> dict:
