@@ -24,7 +24,7 @@ from src import load_config  # noqa: E402
 from src.agent import chat_turn, run_action  # noqa: E402
 from src.pipeline import app_config, get_similar, load_resources, result_to_dict, search_products  # noqa: E402
 from src.store import (FIELDS, OPTIONAL_FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
-                       list_stores, read_feed, shopify_feed_url, store_name_from)
+                       list_stores, read_feed, refresh_store, shopify_feed_url, store_name_from)
 
 DEMO = "Demo appliance store"
 EXAMPLES = ["quiet portable countertop ice maker under $150", "refrigerator water filter, not Samsung",
@@ -37,7 +37,8 @@ FIELD_QUESTIONS = {"product_id": "Which column is the product's code or ID?", "t
                    "category": "Which column is the category?", "description": "Which column describes the product?",
                    "features": "Which column lists features or tags?",
                    "rating": "Which column is the average star rating (optional)?",
-                   "rating_count": "Which column is the number of ratings or reviews (optional)?"}
+                   "rating_count": "Which column is the number of ratings or reviews (optional)?",
+                   "in_stock": "Which column says whether it is in stock (optional)?"}
 NONE = "— not in my file —"
 
 st.set_page_config(page_title="Shopping Assistant", page_icon="🛒", layout="wide")
@@ -184,7 +185,9 @@ with chat_tab:
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([6, 1, 1, 1])
                     c1.markdown(f"**{p['number']}. {md(p['title'])}**  \n"
-                                + " · ".join(md(x) for x in [p.get("brand"), money(p.get("price")), stars(p)] if x))
+                                + " · ".join(md(x) for x in [p.get("brand"), money(p.get("price")), stars(p),
+                                                             "**Out of stock**" if p.get("in_stock") is False else None]
+                                             if x))
                     if p.get("reason"):
                         c1.caption(md(p["reason"]))
                     last = i == len(st.session_state["chat_log"]) - 1          # buttons act on the latest list
@@ -348,11 +351,31 @@ with add_tab:
         log = st.session_state.get("added")
         if log:
             st.success(f"Done! {log['products']:,} products are ready in “{log['store']}” "
-                       f"({log['n_categories']} categories; {log['price_missing']} without a price).")
+                       f"({log['n_categories']} categories; {log['price_missing']} without a price; "
+                       f"{log.get('out_of_stock', 0)} out of stock, never recommended).")
             if st.button("Start shopping in this store"):
                 st.session_state["pending_store"] = log["store"]
                 st.session_state.pop("added", None)
                 st.rerun()
+
+    if store:
+        with st.container(border=True):
+            st.markdown("### Keep your products up to date")
+            info_path = STORES_DIR / store / "import_log.json"
+            info = json.loads(info_path.read_text(encoding="utf-8")) if info_path.exists() else {}
+            st.caption(f"“{md(shop)}”: {info.get('products', 0):,} products, last updated "
+                       f"{info.get('updated_at', 'when it was added')}. Prices, stock and new products are read "
+                       "again from where they came from; products that are out of stock are never suggested.")
+            if st.button("Update products now"):
+                try:
+                    with st.spinner("Reading your latest products…"):
+                        upd = refresh_store(store, model=res.model)
+                    st.success(f"Updated: {upd['products']:,} products ({upd['added']} new, {upd['removed']} "
+                               f"removed, {upd['changed']} changed, {upd['out_of_stock']} out of stock).")
+                except ValueError as exc:
+                    st.warning(f"Couldn't update automatically: {exc}.")
+                except Exception:  # noqa: BLE001 - network problems get one friendly message
+                    st.error("Couldn't read your products right now. Please try again later.")
 
     with st.container(border=True):
         st.markdown("### Step 2 · Put the assistant on your website")

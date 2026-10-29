@@ -201,3 +201,95 @@ def test_column_mapping_questions_cover_the_optional_rating_columns():
     keys = next(ast.literal_eval(node.value).keys() for node in tree.body if isinstance(node, ast.Assign)
                 and getattr(node.targets[0], "id", "") == "FIELD_QUESTIONS")
     assert set(store.FIELDS) | set(store.OPTIONAL_FIELDS) <= set(keys)
+
+
+# ---- Phase 13.2: stock / availability and incremental re-sync -------------------------------------------
+
+def test_shopify_csv_stock_combines_variant_rows_and_selling_policy(tmp_path):
+    csv = """Handle,Title,Variant Price,Variant Inventory Tracker,Variant Inventory Qty,Variant Inventory Policy
+sold-out,Sold Out Kettle,10,shopify,0,deny
+preorder,Preorder Kettle,10,shopify,0,continue
+mixed,Mixed Kettle,10,shopify,0,deny
+mixed,,12,shopify,3,deny
+untracked,Untracked Kettle,10,,0,deny
+"""
+    cat, log = import_feed(read_feed(write(tmp_path, "s.csv", csv)), "shopify")
+    stock = dict(zip(cat["product_id"], cat["in_stock"]))
+    assert stock == {"sold-out": False, "preorder": True, "mixed": True, "untracked": True}
+    assert log["out_of_stock"] == 1
+    plain, _ = import_feed(read_feed(write(tmp_path, "p.csv", SHOPIFY_CSV)), "shopify")   # no inventory columns
+    assert plain["in_stock"].isna().all()
+
+
+def test_shopify_json_woocommerce_and_generic_stock(tmp_path):
+    data = {"products": [
+        {"id": 1, "handle": "a", "title": "A", "variants": [{"price": "5", "available": False},
+                                                             {"price": "6", "available": True}]},
+        {"id": 2, "handle": "b", "title": "B", "variants": [{"price": "5", "available": False}]},
+        {"id": 3, "handle": "c", "title": "C", "variants": [{"price": "5"}]}]}
+    cat, _ = import_feed(read_feed(write(tmp_path, "p.json", json.dumps(data))), "shopify_json")
+    assert cat["in_stock"].tolist() == [True, False, None]
+    woo = """ID,SKU,Type,Parent,Name,Regular price,In stock?,Backorders allowed?
+1,K-1,simple,,Kettle,20,0,0
+2,K-2,simple,,Frother,15,0,notify
+3,K-3,variable,,Grinder,,,
+4,,variation,id:3,Grinder - red,30,1,0
+5,K-5,simple,,Scale,9,1,0
+"""
+    cat, _ = import_feed(read_feed(write(tmp_path, "w.csv", woo)), "woocommerce")
+    assert dict(zip(cat["product_id"], cat["in_stock"])) == {"K-1": False, "K-2": True, "K-3": True, "K-5": True}
+    feed = pd.DataFrame({"product_id": list("abcde"), "title": list("ABCDE"),
+                         "availability": ["in stock", "Out of Stock", "0", "12", ""]})
+    cat, _ = import_feed(feed, "generic")
+    assert cat["in_stock"].tolist() == [True, False, False, True, None]
+    mapped, _ = import_feed(feed.rename(columns={"availability": "Stock status"}), "generic",
+                            {"in_stock": "Stock status"})            # ("Status" means published, in Shopify)
+    assert mapped["in_stock"].tolist()[:2] == [True, False]
+
+
+class CountingModel(FakeModel):
+    def __init__(self):
+        self.encoded = []
+
+    def encode(self, texts, **kwargs):
+        self.encoded += list(texts)
+        return super().encode(texts, **kwargs)
+
+
+def test_refresh_reuses_unchanged_embeddings_and_reports_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    feed = pd.DataFrame({"product_id": ["a", "b", "c"], "title": ["Kettle", "Toaster", "Grinder"],
+                         "price": [10, 20, 30], "in_stock": [1, 1, 1]})
+    path = tmp_path / "feed.csv"
+    feed.to_csv(path, index=False)
+    store.build_store("demo", path, "generic", model=CountingModel(), cfg=cfg)
+    old_emb = np.load(tmp_path / "stores" / "demo" / "embeddings.npy")
+    feed = pd.DataFrame({"product_id": ["a", "b", "d"], "title": ["Kettle", "Toaster XL", "Scale"],
+                         "price": [12, 20, 5], "in_stock": [0, 1, 1]})              # a: price + stock only
+    feed.to_csv(path, index=False)
+    model = CountingModel()
+    log = store.refresh_store("demo", model=model, cfg=cfg)
+    assert (log["added"], log["removed"], log["changed"], log["reused"]) == (1, 1, 1, 1)
+    assert len(model.encoded) == 2                                   # only b (new text) and d (new product)
+    cat = pd.read_pickle(tmp_path / "stores" / "demo" / "catalog.pkl")
+    assert cat.set_index("product_id").loc["a", "price"] == 12 and not cat.set_index("product_id").loc["a", "in_stock"]
+    new_emb = np.load(tmp_path / "stores" / "demo" / "embeddings.npy")
+    assert np.array_equal(new_emb[list(cat["product_id"]).index("a")], old_emb[0])
+    assert json.loads((tmp_path / "stores" / "demo" / "import_log.json").read_text())["source"] == str(path)
+
+
+def test_refresh_needs_a_source_it_can_read_again(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    feed = pd.DataFrame({"product_id": ["a"], "title": ["Kettle"]})
+    store.build_store_from_feed("up", feed, "generic", model=FakeModel(), cfg=cfg, source="upload")
+    with pytest.raises(ValueError, match="upload"):
+        store.refresh_store("up", model=FakeModel(), cfg=cfg)
+    with pytest.raises(ValueError, match="no store"):
+        store.refresh_store("missing", model=FakeModel(), cfg=cfg)
+    calls, shop_feed = [], pd.DataFrame({"handle": ["a"], "title": ["Kettle"]})
+    monkeypatch.setattr(store, "read_feed", lambda src: calls.append(src) or shop_feed)
+    store.build_store_from_feed("shop", shop_feed, "shopify_json", model=FakeModel(), cfg=cfg, source="MyShop.com")
+    store.refresh_store("shop", model=FakeModel(), cfg=cfg)
+    assert calls == ["https://myshop.com/products.json"]              # a typed Shopify address is re-read

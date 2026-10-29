@@ -334,6 +334,10 @@ def _buy(product_id: str, state: ChatState, res: Resources, link: str | None) ->
     row = rows_of([product_id], res).iloc[0]
     url = link.format(id=row["product_id"]) if link else None
     title = str(row["title"])[:80]
+    if row.get("in_stock") is False:
+        return TurnResult("buy", f"“{title}” is currently out of stock at the store"
+                          + ("; its product page shows when it is back. I don't place orders." if url else "."),
+                          state, cards([row["product_id"]], res, link), link=url)
     text = (f"Great choice: “{title}” ({_price(row['price'])}). Open its product page to buy it from the store; "
             "I don't place orders." if url else
             f"“{title}” ({_price(row['price'])}): I can't link to this store's product page, so search for this name "

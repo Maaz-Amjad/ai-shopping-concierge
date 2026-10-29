@@ -32,6 +32,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 11 Demo app, store connector (API + widget), MCP server: `app/`, `src/store.py` | done |
 | 12 Shopping chat agent (`src/agent.py`), website chat bubble, any LLM provider (`src/llm.py`) | done |
 | 13 Production improvements: star ratings in ranking (13.1) | done: test effect on relevance neutral, used by the app |
+| 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -100,6 +101,14 @@ paste two lines into any page:
 ```
 
 This adds a floating chat bubble (the shopping assistant); add `data-mode="search"` for a plain search box instead.
+
+**Stock and updates.** Products marked out of stock are never recommended (search, similar products, chat); unknown
+stock counts as available. Stock is read from Shopify inventory columns (quantity, "continue selling", untracked),
+the Shopify store link (variant availability), WooCommerce "In stock?"/backorders, or an `in_stock`/`availability`
+column (`--map in_stock=...`). `python -m src.store --name mystore --refresh` re-reads a store from where it came
+from (file, feed URL or Shopify address) and re-embeds only products whose text changed; add `--every 60` to repeat
+hourly, or schedule it (Task Scheduler / cron). The app's *Add your store* tab has an *Update products now* button,
+and the API reloads a store as soon as it changes.
 
 Optional rating columns (`rating`/`average_rating` and `rating_count`/`review_count`, or `--map rating=...`) are
 read when present and shown as stars; a store without any ratings ranks exactly as with the spec weights. Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`

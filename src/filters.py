@@ -25,9 +25,18 @@ def price_mask(df: pd.DataFrame, pq: ParsedQuery) -> np.ndarray:
     return m
 
 
+def available_mask(df: pd.DataFrame) -> np.ndarray:
+    """False only for products marked out of stock (Phase 13.2); unknown stock counts as available."""
+    if "in_stock" not in df:
+        return np.ones(len(df), dtype=bool)
+    return np.array([v is None or (isinstance(v, float) and np.isnan(v)) or bool(v) for v in df["in_stock"]],
+                    dtype=bool)
+
+
 def non_price_mask(df: pd.DataFrame, pq: ParsedQuery, use_exclusions: bool = True) -> np.ndarray:
-    """Category, brand (case-insensitive: catalog spellings vary) and exclusion terms."""
-    m = np.ones(len(df), dtype=bool)
+    """Category, brand (case-insensitive: catalog spellings vary), exclusion terms, and stock: a product marked
+    out of stock is never a candidate."""
+    m = available_mask(df)
     if pq.category:
         m &= (df["category"] == pq.category).to_numpy()
     if pq.brand:

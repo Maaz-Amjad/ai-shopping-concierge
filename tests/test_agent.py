@@ -216,3 +216,13 @@ def test_comparison_rating_with_a_missing_count(tmp_path):
     res.catalog = res.catalog.assign(avg_rating=[4.5, 4.0, 3.0], rating_count=[np.nan, 3, 4])
     out = chat_turn("compare 1 and 2", ChatState(shown=["A", "B"]), res)
     assert [r["rating"] for r in out.comparison] == ["4.5 ★ (0 ratings)", "4.0 ★ (3 ratings)"]
+
+
+
+def test_saved_product_that_sold_out_says_so(tmp_path):
+    res = agent_res(tmp_path, [], [])
+    res.catalog = res.catalog.assign(in_stock=[False, True, None])
+    out = run_action("buy", {"product_id": "A"}, ChatState(shortlist=["A"]), res, link=LINK)
+    assert "out of stock" in out.text and out.products[0]["in_stock"] is False
+    shown = run_action("show_shortlist", {}, ChatState(shortlist=["A", "B"]), res, link=LINK)
+    assert [p["in_stock"] for p in shown.products] == [False, True]

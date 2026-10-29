@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,11 @@ PAGE_SIZE, MAX_PAGES = 250, 200     # Shopify products.json pagination
 FIELDS = ["product_id", "title", "brand", "category", "price", "description", "features"]
 # optional rating columns (generic exports, review apps); mapping keys "rating" and "rating_count" also work
 OPTIONAL_FIELDS = {"rating": ["rating", "average_rating", "avg_rating", "Average rating"],
-                   "rating_count": ["rating_count", "review_count", "reviews", "Review count"]}
+                   "rating_count": ["rating_count", "review_count", "reviews", "Review count"],
+                   "in_stock": ["in_stock", "availability", "available", "stock", "In stock?", "Stock"]}
+IN_STOCK_WORDS = {"1", "true", "yes", "y", "in stock", "instock", "in_stock", "available", "onbackorder", "backorder"}
+OUT_OF_STOCK_WORDS = {"0", "false", "no", "n", "out of stock", "outofstock", "out_of_stock", "sold out", "soldout",
+                      "unavailable"}
 
 # canonical field -> source columns, first non-empty one wins
 PRESETS: dict[str, dict[str, list[str]]] = {
@@ -94,8 +100,10 @@ def flatten_shopify(product: dict) -> dict:
     """One Shopify API product -> flat row; price = first variant's price, tags joined with semicolons."""
     variants = product.get("variants") or [{}]
     tags = product.get("tags") or []
+    known = [bool(v["available"]) for v in variants if v.get("available") is not None]
     return {**{k: product.get(k) for k in ("id", "handle", "title", "vendor", "product_type", "body_html")},
-            "price": variants[0].get("price"), "tags": "; ".join(tags) if isinstance(tags, list) else tags}
+            "price": variants[0].get("price"), "tags": "; ".join(tags) if isinstance(tags, list) else tags,
+            "available": any(known) if known else None}       # in stock when any variant can be bought
 
 
 def last_level(category: str, multi: bool = False) -> str:
@@ -107,6 +115,48 @@ def last_level(category: str, multi: bool = False) -> str:
 
 def _text(feed: pd.DataFrame, column: str) -> pd.Series:
     return feed[column].astype(str).str.strip() if column in feed else pd.Series("", index=feed.index)
+
+
+def parse_stock(value: Any) -> bool | None:
+    """In stock (True), out of stock (False) or unknown (None) from a stock flag, word or quantity."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    text = str(value).strip().lower()
+    if text in IN_STOCK_WORDS:
+        return True
+    if text in OUT_OF_STOCK_WORDS:
+        return False
+    try:
+        return float(text.replace(",", "")) > 0                 # a quantity
+    except ValueError:
+        return None
+
+
+def row_stock(feed: pd.DataFrame, preset: str, column: str | None = None) -> pd.Series:
+    """Stock per feed row. Shopify CSV: quantity > 0, or "continue selling", or inventory not tracked;
+    WooCommerce: "In stock?" or backorders allowed; otherwise the first stock-like column (or `column`)."""
+    unknown = pd.Series([None] * len(feed), index=feed.index, dtype=object)
+    if column:
+        return feed[column].map(parse_stock).astype(object) if column in feed else unknown
+    if preset == "shopify" and "Variant Inventory Qty" in feed:
+        qty = pd.to_numeric(_text(feed, "Variant Inventory Qty").str.replace(",", ""), errors="coerce")
+        tracked = _text(feed, "Variant Inventory Tracker").ne("") if "Variant Inventory Tracker" in feed else True
+        sellable = (qty > 0) | _text(feed, "Variant Inventory Policy").str.lower().eq("continue") | ~tracked
+        return sellable.astype(object).where(qty.notna(), None)          # rows without a variant say nothing
+    if preset == "woocommerce" and "In stock?" in feed:
+        backorders = _text(feed, "Backorders allowed?").str.lower().isin(["1", "notify"])
+        return feed["In stock?"].map(parse_stock).astype(object).where(~backorders, True)
+    for name in OPTIONAL_FIELDS["in_stock"]:
+        if name in feed:
+            return feed[name].map(parse_stock).astype(object)
+    return unknown
+
+
+def _any_stock(values: pd.Series) -> bool | None:
+    known = [bool(v) for v in values if v is not None and not (isinstance(v, float) and np.isnan(v))]
+    return any(known) if known else None
 
 
 def drop_unpublished(feed: pd.DataFrame, log: dict) -> pd.DataFrame:
@@ -132,6 +182,13 @@ def merge_woo_variations(feed: pd.DataFrame, log: dict) -> pd.DataFrame:
     for column in ("Sale price", "Regular price"):
         if column not in out:
             out[column] = ""
+    if "In stock?" in feed:                    # a variable parent is in stock when any variation is
+        var_stock = pd.Series(var["In stock?"].map(parse_stock).to_numpy(),
+                              index=_text(var, "Parent").str.removeprefix("id:")).groupby(level=0).agg(_any_stock)
+        blank = _text(out, "In stock?").eq("")
+        parent_stock = _text(out, "ID").map(var_stock)
+        fill = blank & parent_stock.notna()
+        out.loc[fill, "In stock?"] = parent_stock[fill].map(lambda v: "1" if v else "0")
     no_price = _text(out, "Sale price").eq("") & _text(out, "Regular price").eq("")
     parent_price = _text(out, "ID").map(cheapest).fillna(_text(out, "SKU").map(cheapest))
     fill = no_price & parent_price.notna()
@@ -181,6 +238,8 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     counts = pd.to_numeric(pick("rating_count"), errors="coerce").replace([np.inf, -np.inf], np.nan)
     df["rating_count"] = counts.fillna(0).clip(lower=0).astype(int)      # odd values (text, inf) count as 0
     df["product_id"] = df["product_id"].map(_clean_id)
+    df["in_stock"] = row_stock(feed, preset, (mapping or {}).get("in_stock"))
+    stock_by_id = df.groupby("product_id")["in_stock"].agg(_any_stock)        # before variant rows are dropped
     for field in ("title", "description", "features", "brand"):
         df[field] = df[field].map(lambda v: clean_text(v) if isinstance(v, str) else "")   # NaN/None -> ""
     multi = preset == "woocommerce"
@@ -194,10 +253,13 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     df = df.drop_duplicates("product_id", keep="first")
     log["dropped_duplicate_id"] = before - len(df)
 
+    df["in_stock"] = [_any_stock(pd.Series([v], dtype=object)) for v in df["product_id"].map(stock_by_id)]
     df["brand"] = df["brand"].replace("", None)
     df["category"] = df["category"].replace("", "Other")
     df = df.assign(popularity=0).reset_index(drop=True)
     df["product_text"] = df.apply(build_product_text, axis=1)
+    log.update(out_of_stock=sum(v is False for v in df["in_stock"]),
+               stock_unknown=sum(v is None for v in df["in_stock"]))
     log.update(products=len(df), price_missing=int(df["price"].isna().sum()),
                brand_missing=int(df["brand"].isna().sum()), n_categories=int(df["category"].nunique()))
     return df, log
@@ -221,15 +283,68 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
     catalog, log = import_feed(feed, preset, mapping)
     if catalog.empty:
         raise ValueError("no products left after import")
-    model = model or load_model(cfg["embedding"]["model"])
-    emb = encode_products(catalog["product_text"].tolist(), model, batch_size=cfg["embedding"]["batch_size"])
     out = STORES_DIR / name
+    old_vectors, old_texts = previous_vectors(out, cfg["embedding"]["model"])
+    keys = list(zip(catalog["product_id"], catalog["product_text"]))
+    todo = [i for i, k in enumerate(keys) if k not in old_vectors]           # new products or changed text
+    fresh = {}
+    if todo:
+        model = model or load_model(cfg["embedding"]["model"])
+        enc = encode_products([keys[i][1] for i in todo], model, batch_size=cfg["embedding"]["batch_size"])
+        fresh = {keys[i]: v for i, v in zip(todo, enc)}
+    emb = np.vstack([fresh.get(k, old_vectors.get(k)) for k in keys]).astype(np.float32)
     out.mkdir(parents=True, exist_ok=True)
-    catalog.to_pickle(out / "catalog.pkl")
     save_embeddings(emb, catalog["product_id"].tolist(), out)
-    log.update(store=name, source=source, preset=preset, mapping=mapping or {}, site=site_host(site))
+    tmp = out / "catalog.pkl.tmp"                     # catalog last and atomic: its change makes the API reload
+    catalog.to_pickle(tmp)
+    os.replace(tmp, out / "catalog.pkl")
+    ids = set(catalog["product_id"])
+    log.update(added=len(ids - set(old_texts)), removed=len(set(old_texts) - ids),
+               changed=sum(pid in old_texts and old_texts[pid] != text for pid, text in keys),
+               reused=len(keys) - len(todo), updated_at=time.strftime("%Y-%m-%d %H:%M"))
+    log.update(store=name, source=source, preset=preset, mapping=mapping or {}, site=site_host(site),
+               embedding_model=cfg["embedding"]["model"])
     (out / "import_log.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     return log
+
+
+def previous_vectors(store_dir: Path, model_name: str) -> tuple[dict, dict]:
+    """A store's saved vectors keyed by (product_id, product_text), and its texts by id, for an incremental update.
+    Empty when there is no earlier import or it used another embedding model."""
+    from src.embed import load_embeddings
+
+    try:
+        log = json.loads((store_dir / "import_log.json").read_text(encoding="utf-8"))
+        catalog = pd.read_pickle(store_dir / "catalog.pkl")
+        emb, ids = load_embeddings(store_dir)
+    except (OSError, ValueError):
+        return {}, {}
+    if log.get("embedding_model", model_name) != model_name or len(emb) != len(catalog) \
+            or list(ids) != [str(p) for p in catalog["product_id"]]:
+        return {}, {}
+    texts = dict(zip(catalog["product_id"], catalog["product_text"]))
+    return {(pid, text): emb[i] for i, (pid, text) in enumerate(texts.items())}, texts
+
+
+def refresh_store(name: str, model: Any = None, cfg: dict | None = None) -> dict:
+    """Re-read a store from the source it was imported from (file path, feed URL or Shopify address) and update it;
+    only products whose text changed are embedded again. Run it on a schedule to keep stock and prices current."""
+    check_store_name(name)
+    log_path = STORES_DIR / name / "import_log.json"
+    if not log_path.exists():
+        raise ValueError(f"no store {name!r}; import it first")
+    prev = json.loads(log_path.read_text(encoding="utf-8"))
+    source = str(prev.get("source") or "")
+    if source in ("", "upload"):
+        raise ValueError("this store was added from an uploaded file; upload the new export to update it")
+    url = source
+    if prev.get("preset") == "shopify_json" and not source.lower().startswith(("http://", "https://")) \
+            and not source.lower().endswith(".json"):
+        url = shopify_feed_url(source)                # the Shopify address typed in the app
+    elif not source.lower().startswith(("http://", "https://")) and not Path(source).exists():
+        raise ValueError(f"the original file {source} is no longer there; upload the new export to update it")
+    return build_store_from_feed(name, read_feed(url), prev.get("preset", "generic"), prev.get("mapping") or None,
+                                 model, cfg, source=source, site=prev.get("site"))
 
 
 def detect_preset(feed: pd.DataFrame) -> str | None:
@@ -308,10 +423,28 @@ def list_stores() -> list[str]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Import a store's product export (CSV/JSON, path or URL).")
     parser.add_argument("--name", required=True, help="store name, used as stores/<name>/")
-    parser.add_argument("--file", required=True, help="CSV or JSON export, path or URL (e.g. https://shop/products.json)")
+    parser.add_argument("--file", help="CSV or JSON export, path or URL (e.g. https://shop/products.json)")
+    parser.add_argument("--refresh", action="store_true",
+                        help="update an imported store from its saved source (only changed products are re-embedded)")
+    parser.add_argument("--every", type=float, default=0, help="with --refresh: repeat every N minutes")
     parser.add_argument("--preset", default="generic", choices=sorted(PRESETS))
     parser.add_argument("--map", default="", help="field=column pairs, e.g. 'title=Name,price=Cost'")
     args = parser.parse_args(argv)
+    if args.refresh:
+        while True:
+            try:
+                log = refresh_store(args.name)
+                print(f"{log['updated_at']} {args.name}: {log['products']} products ({log['added']} added, "
+                      f"{log['removed']} removed, {log['changed']} changed, {log['out_of_stock']} out of stock)")
+            except Exception as exc:  # noqa: BLE001 - a scheduled update keeps running after one failed read
+                print(f"update failed: {exc}")
+                if not args.every:
+                    raise SystemExit(1) from None
+            if not args.every:
+                return
+            time.sleep(args.every * 60)
+    if not args.file:
+        parser.error("--file is required (or use --refresh for an imported store)")
     mapping = dict(pair.split("=", 1) for pair in args.map.split(",") if pair)
     print(json.dumps(build_store(args.name, args.file, args.preset, mapping), indent=2))
 

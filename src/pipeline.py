@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src import ROOT, load_config, set_seed
-from src.filters import relaxation_suggestions
+from src.filters import available_mask, relaxation_suggestions
 from src.generate import (MAX_WORDS, GenerationResult, answer_text, generate_answer, no_result_answer,
                           template_answer, unpriced_section)
 from src.llm import CallLimitReached, LLMClient, provider_settings
@@ -129,7 +129,7 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
 
 
 PRODUCT_FIELDS = ["product_id", "title", "brand", "category", "price"]
-RATING_FIELDS = ["avg_rating", "rating_count"]          # Phase 13.1; absent in older store imports
+RATING_FIELDS = ["avg_rating", "rating_count", "in_stock"]   # Phase 13.1/13.2; absent in older store imports
 SCORE_FIELDS = ["rank", "final", "s_sem", "s_pers", "s_pop", "s_rat", "cosine"]
 
 
@@ -178,7 +178,8 @@ def get_similar(product_id: str, res: Resources, n: int = 5) -> pd.DataFrame:
         raise KeyError(f"unknown product_id {product_id}")
     scores = res.embeddings @ res.embeddings[rows[0]]
     order = np.argsort(-scores, kind="stable")
-    top = order[order != rows[0]][:n]                   # never the product itself, even in a tiny catalog
+    keep = (order != rows[0]) & available_mask(res.catalog)[order]   # never itself or an out-of-stock product
+    top = order[keep][:n]
     out = res.catalog.iloc[top][product_fields(res.catalog)].reset_index(drop=True)
     return out.assign(similarity=scores[top].astype(float).round(4))
 

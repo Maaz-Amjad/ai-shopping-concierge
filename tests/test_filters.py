@@ -58,3 +58,11 @@ def test_relaxation_suggestions_rank_by_products_restored():
     assert relaxation_suggestions(DF, pq) == [("brand", 1), ("category", 1), ("price", 1)]
     pq2 = q(category="Ice Makers", max_price=90)
     assert relaxation_suggestions(DF, pq2) == [("price", 4), ("category", 1)]
+
+
+
+def test_out_of_stock_products_are_never_candidates_unknown_stock_is_kept():
+    df = pd.DataFrame({"title": ["a", "b", "c"], "features": ["", "", ""], "price": [1.0, 2.0, np.nan],
+                       "category": ["X", "X", "X"], "brand": ["B", "B", "B"], "in_stock": [True, False, None]})
+    assert rows(build_mask(df, q())) == [0, 2]
+    assert rows(unpriced_mask(df, q(max_price=5))) == [2]

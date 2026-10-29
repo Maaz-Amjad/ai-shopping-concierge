@@ -144,3 +144,12 @@ def test_app_config_uses_production_weights_and_results_show_ratings(tmp_path):
     products = {p["product_id"]: p for p in result_to_dict("ice maker", out, res)["products"]}
     assert products["A"]["avg_rating"] == 4.5 and products["A"]["rating_count"] == 120
     assert products["B"]["avg_rating"] is None and "s_rat" in products["A"]
+
+
+
+def test_similar_products_skip_out_of_stock_items(tmp_path):
+    from src.pipeline import get_similar
+
+    res = resources(tmp_path, [])
+    res.catalog = res.catalog.assign(in_stock=[True, False, None])
+    assert get_similar("A", res, 2)["product_id"].tolist() == ["C"]

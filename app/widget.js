@@ -114,7 +114,8 @@
       (data.products || []).forEach(function (p) {
         var c = el("div", "cw-pcard");
         c.appendChild(el("div", "cw-t", p.number + ". " + p.title));
-        c.appendChild(el("div", "cw-meta", [p.brand || "", price(p.price), stars(p)].filter(Boolean).join(" · ")));
+        c.appendChild(el("div", "cw-meta", [p.brand || "", price(p.price), stars(p),
+          p.in_stock === false ? "Out of stock" : ""].filter(Boolean).join(" · ")));
         if (p.reason) c.appendChild(el("div", null, p.reason));
         var acts = el("div", "cw-acts");
         [["Save", "save"], ["Similar", "similar"], ["Buy", "buy"]].forEach(function (a) {

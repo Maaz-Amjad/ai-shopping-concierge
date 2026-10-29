@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 217 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 225 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -284,6 +284,22 @@ The rating term is used by the demo app, API, chat assistant and MCP server (`ap
 experiment above keeps the spec's three-term weights, so all earlier tables reproduce exactly (checked: rebuilt
 catalog values and benchmark runs identical). Ratings are shown on product cards and in the chat comparison table, and
 store imports read optional rating columns (values outside 1–5 are ignored). Review text is still not used.
+
+### 12.2 Stock and catalog updates
+
+A live store must never recommend what it cannot sell. Imported products now carry a stock flag (in stock, out of
+stock, or unknown), read from what each platform exports: Shopify inventory quantity, "continue selling when out of
+stock" and untracked inventory (combined over a product's variant rows), the availability of each variant from a
+Shopify store link, WooCommerce "In stock?" and backorders (a variable product is in stock when any variation is), or
+any availability column. Out-of-stock products are removed in the same deterministic mask as the other hard limits,
+so search, similar products and the chat never suggest them; unknown stock counts as available. A product saved to the
+shortlist that later sells out is labelled, and "buy" says so.
+
+Stores are kept current by re-reading their source (`--refresh`, optionally on a schedule, or a button in the app).
+Only products whose text changed are embedded again, so an unchanged 300-product store updates in under 3 seconds
+without loading the embedding model; the catalog file is replaced atomically and the API reloads it. Checked end to
+end on a copy of the 300-product sample export with 20 products marked sold out: none appeared in five searches or in
+the similar-product lists of 30 products. The benchmark catalog has no stock data, so no result above changes.
 
 ## 13. Future work
 

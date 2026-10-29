@@ -104,3 +104,27 @@ def test_chat_cards_show_star_ratings(tmp_path, monkeypatch):
     assert not at.exception
     text = " ".join(m.value for m in at.markdown).replace("\\", "")              # card text is markdown-escaped
     assert "★ 4.5 (1,234 ratings)" in text and text.count("★") == 1                  # unrated B shows no stars
+
+
+def test_update_products_button_refreshes_the_selected_store(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+
+    res = resources(tmp_path, [])
+    (tmp_path / "stores" / "shop1").mkdir(parents=True)
+    (tmp_path / "stores" / "shop1" / "import_log.json").write_text(json.dumps({"products": 3, "updated_at": "earlier"}))
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: ["shop1"])
+    monkeypatch.setattr(store, "refresh_store", lambda name, model=None: {
+        "products": 4, "added": 1, "removed": 0, "changed": 2, "out_of_stock": 1})
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": [], "product_id": [], "rating": [], "timestamp": []}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.sidebar.selectbox[0].select("shop1").run()
+    assert not at.exception
+    next(b for b in at.button if b.label == "Update products now").click().run()
+    assert not at.exception
+    assert any("1 new" in s.value and "1 out of stock" in s.value for s in at.success)
