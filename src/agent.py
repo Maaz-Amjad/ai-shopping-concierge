@@ -206,12 +206,8 @@ def do_search(args: dict, message: str, state: ChatState, res: Resources, user_i
     request = str(args.get("request") or message).strip()[:MAX_TEXT]
     raw = ParsedQuery(semantic_query=request, **merge_limits(args, state))
     parsed, log = validate(raw, request, res.meta)
-    early = _early(on_products, res, link)
-    try:
-        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True, on_products=early)
-    except CallLimitReached:          # per-process cap: same products, answer from catalog fields
-        out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True, llm=False,
-                      on_products=early)
+    out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True,
+                  on_products=_early(on_products, res, link), degrade_on_limit=True)   # cap: catalog-field answer
     view = result_to_dict(request, out, res)
     extra = {p["product_id"]: {k: p[k] for k in ("reason", "s_sem", "s_pers", "s_pop", "final") if k in p}
              for p in view["products"]}

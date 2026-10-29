@@ -78,13 +78,15 @@ class PipelineResult:
 
 def respond(query: str, res: Resources, user_id: str | None = None, n: int | None = None,
             parsed: ParsedQuery | None = None, use_exclusions: bool = False, llm: bool = True,
-            on_products: Callable[[dict], None] | None = None) -> PipelineResult:
+            on_products: Callable[[dict], None] | None = None, degrade_on_limit: bool = False) -> PipelineResult:
     """Answer one query (spec 11). Pass `parsed` to reuse a cached parse; unknown users are cold-start.
 
     use_exclusions=False matches S6 = S5 + personalization; True adds the optional exclusions (spec 8.3).
     llm=False makes no LLM call: semantic-only search (unless `parsed` is given) and the template answer.
     on_products(view) is called with the ranked products before the answer is generated (Phase 13.6: shoppers see
-    products in about a second; the answer follows once it has passed the grounding validator).
+    products in about a second; the answer follows once it has passed the grounding validator). It is not called
+    when nothing matches. degrade_on_limit: when the LLM call cap is reached at generation, keep the parse and the
+    ranking and answer from catalog fields (the interactive paths); otherwise the cap stops the run (batch jobs).
     """
     from src.embed import encode_query, use_query_instruction
 
@@ -125,12 +127,21 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
                  price_excluded=result.price_excluded, n_unpriced=len(result.unpriced))
 
     t = time.perf_counter()
-    if on_products is not None:
+    if on_products is not None and not ranked.empty:
         on_products({"query": query, "parsed": parsed.model_dump(), "products": product_items(ranked, res)})
     items = res.catalog.iloc[ranked["row"].to_numpy()].reset_index(drop=True)
     suggestions = relaxation_suggestions(res.catalog, parsed) if items.empty else None
     if llm:
-        answer = generate_answer(query, parsed, items, res.client, res.brands, n_requested=n, suggestions=suggestions)
+        try:
+            answer = generate_answer(query, parsed, items, res.client, res.brands, n_requested=n,
+                                     suggestions=suggestions)
+        except CallLimitReached:
+            if not degrade_on_limit:
+                raise
+            answer = GenerationResult(no_result_answer(suggestions or []) if items.empty else
+                                      template_answer(items, n), None, fallback="no_result" if items.empty
+                                      else "template")
+            flags["llm_limit_reached"] = True
     elif items.empty:
         answer = GenerationResult(no_result_answer(suggestions or []), None, fallback="no_result")
     else:
@@ -181,10 +192,12 @@ def search_products(query: str, res: Resources, *, max_price: float | None = Non
                                   "brand": brand}.items() if v is not None}
     try:
         if not explicit:
-            return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions, on_products=on_products)
+            return respond(query, res, user_id=user_id, n=n, use_exclusions=use_exclusions, on_products=on_products,
+                           degrade_on_limit=True)
         pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
         parsed, log = validate(pr.parsed.model_copy(update=explicit), query, res.meta)
-        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions, on_products=on_products)
+        out = respond(query, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=use_exclusions, on_products=on_products,
+                           degrade_on_limit=True)
         out.flags.update(parse_log=pr.log + [f"explicit filter: {k}={v}" for k, v in explicit.items()] + log,
                          parser_fallback=pr.fallback)
         return out

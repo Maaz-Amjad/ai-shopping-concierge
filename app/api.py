@@ -30,7 +30,7 @@ from src import ROOT, load_config
 from src import store as store_mod
 from src.pipeline import (Resources, app_config, get_similar, load_resources, records, result_to_dict,
                           search_products)
-from src.agent import chat_turn, run_action
+from src.agent import ChatState, chat_turn, run_action
 from src.store import STORES_DIR, link_template, valid_store_name
 
 APP_DIR = Path(__file__).resolve().parent
@@ -108,9 +108,8 @@ def ndjson_stream(work: Callable[[Callable[[dict], None]], dict]) -> StreamingRe
     def run() -> None:
         try:
             events.put(("final", work(lambda e: events.put(("event", e)))))
-        except Exception as exc:  # noqa: BLE001 - reported to the client as an error line
-            events.put(("error", {"type": "error", "detail": str(exc).splitlines()[0][:200] if str(exc) else
-                                  type(exc).__name__}))
+        except BaseException:  # noqa: BLE001 - never leave the stream waiting; details stay on the server
+            events.put(("error", {"type": "error", "detail": "something went wrong; please try again"}))
 
     def lines():
         threading.Thread(target=run, daemon=True).start()
@@ -203,14 +202,35 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
                                     headers={"Retry-After": str(int(wait) + 1)})
         else:
             response = await call_next(request)
-        if request_log is not None:
+        if request_log is None:
+            return response
+
+        def write(error: bool = False) -> None:
             line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "method": request.method, "path": path,
                     "store": request.query_params.get("store"), "status": response.status_code,
                     "ms": round((time.perf_counter() - start) * 1000, 1)}
+            if error:
+                line["stream_error"] = True
             with log_lock:
                 Path(request_log).parent.mkdir(parents=True, exist_ok=True)
                 with open(request_log, "a", encoding="utf-8") as f:
                     f.write(json.dumps(line) + "\n")
+
+        if not path.endswith("/stream"):
+            write()
+            return response
+        body = response.body_iterator                     # streams: log when the last line has been sent
+
+        async def logged():
+            error = False
+            try:
+                async for chunk in body:
+                    error = error or b'"type": "error"' in (chunk if isinstance(chunk, bytes) else chunk.encode())
+                    yield chunk
+            finally:
+                write(error)
+
+        response.body_iterator = logged()
         return response
 
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"],   # outermost, so
@@ -259,13 +279,14 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         store = req.store or None
         check_key(store, x_api_key)
         res = resources(store)
+        try:
+            state = ChatState.model_validate(req.state or {})       # rejected with 400 before streaming starts
+        except ValidationError:
+            raise HTTPException(400, "invalid chat state") from None
 
         def work(emit):
-            try:
-                out = chat_turn(req.message, req.state, res, user_id=req.user_id, n=req.n, link=link_template(store),
-                                on_products=lambda products: emit({"type": "products", "products": products}))
-            except ValidationError:
-                raise ValueError("invalid chat state") from None
+            out = chat_turn(req.message, state, res, user_id=req.user_id, n=req.n, link=link_template(store),
+                            on_products=lambda products: emit({"type": "products", "products": products}))
             return {"type": "turn", **out.to_dict()}
 
         return ndjson_stream(work)

@@ -47,10 +47,21 @@
     return e;
   }
 
-  // Phase 13.6: read a newline-delimited JSON stream; onEvent gets every event, the promise the last one.
+  // Phase 13.6: read a newline-delimited JSON stream; onEvent gets every event, the promise the final one
+  // ("answer" or "turn"; anything else means the stream was cut). Browsers without streams use the plain endpoint.
+  function plainJson(path, body) {
+    return fetch(api + path, {method: "POST", headers: headers, body: JSON.stringify(body)}).then(function (r) {
+      return r.json().then(function (b) { if (!r.ok) throw new Error(b.detail || r.statusText); return b; });
+    });
+  }
+
   function streamJson(path, body, onEvent) {
+    if (typeof ReadableStream === "undefined" || typeof TextDecoder === "undefined") {
+      return plainJson(path.replace("/stream", ""), body);
+    }
     return fetch(api + path, {method: "POST", headers: headers, body: JSON.stringify(body)}).then(function (r) {
       if (!r.ok) return r.json().then(function (b) { throw new Error(b.detail || r.statusText); });
+      if (!r.body || !r.body.getReader) return plainJson(path.replace("/stream", ""), body);
       var reader = r.body.getReader(), decoder = new TextDecoder(), buffer = "", last = null;
       function pump() {
         return reader.read().then(function (chunk) {
@@ -64,7 +75,11 @@
             last = e;
             onEvent(e);
           });
-          return chunk.done ? last : pump();
+          if (!chunk.done) return pump();
+          if (!last || (last.type !== "answer" && last.type !== "turn")) {
+            throw new Error("the connection was interrupted; please try again");
+          }
+          return last;
         });
       }
       return pump();
@@ -187,13 +202,12 @@
       var early = null;                      // products shown before the answer arrives (/chat/stream)
       var request = path === "/chat" ?
         streamJson("/chat/stream", body, function (e) {
-          if (e.type !== "products") return;
+          if (e.type !== "products" || early) return;      // one early list per message
           early = botMessage({text: "Here is what I found; writing a short summary…", products: e.products});
           msgs.insertBefore(early, wait);
           msgs.scrollTop = msgs.scrollHeight;
         }) :
-        fetch(api + path, {method: "POST", headers: headers, body: JSON.stringify(body)})
-          .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.detail || r.statusText); return b; }); });
+        plainJson(path, body);
       return request
         .then(function (data) {
           if (early) early.remove();
@@ -203,7 +217,10 @@
           var url = safeUrl(data.link);
           if (url && path === "/chat/action") window.open(url, "_blank", "noopener");
         })
-        .catch(function (e) { show({bot: {text: "Sorry, something went wrong: " + e.message}}); })
+        .catch(function (e) {
+          if (early) early.remove();
+          show({bot: {text: "Sorry, something went wrong: " + e.message}});
+        })
         .finally(function () { wait.remove(); send.disabled = false; });
     }
 

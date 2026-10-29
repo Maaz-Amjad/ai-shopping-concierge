@@ -620,8 +620,9 @@ def run_judge_s6(cfg: dict, limit: int | None) -> None:
 
 
 def run_judge_extra(cfg: dict, limit: int | None) -> None:
-    """Judge the test top-10 pairs that the Phase 13 production rankings retrieve but nobody graded: rating weight
-    0.10 (new + experiment-A shoppers) and hybrid a = 0.5. Same judge and prompt; saved to judge_labels_extra.csv
+    """Judge the test top-10 pairs that the two chosen Phase 13 settings retrieve but nobody graded: rating weight
+    0.10 (new + experiment-A shoppers, dense retrieval) and hybrid a = 0.5 (no rating term); their combination, as
+    the app runs it, is not a judged run. Labels are LLM-only (no human check), judged in batches of new products. Same judge and prompt; saved to judge_labels_extra.csv
     (main qrels unchanged). --limit 0 only counts the pairs and today's judge calls."""
     from src.data import load_catalog, load_interactions
     from src.personalize import pick_users
