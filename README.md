@@ -102,7 +102,7 @@ paste two lines into any page:
 This adds a floating chat bubble (the shopping assistant); add `data-mode="search"` for a plain search box instead.
 
 Optional rating columns (`rating`/`average_rating` and `rating_count`/`review_count`, or `--map rating=...`) are
-read when present and shown as stars; products without ratings rank as before. Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
+read when present and shown as stars; a store without any ratings ranks exactly as with the spec weights. Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
 (`product_id,title,brand,category,price,description,features`). API: `POST /search`, `POST /chat` (one chat turn; the
 client sends back the returned state), `POST /chat/action` (card buttons, no LLM call), `GET /similar/{id}`,
 `GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in

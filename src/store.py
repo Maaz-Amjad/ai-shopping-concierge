@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from src import ROOT, load_config
@@ -177,7 +178,8 @@ def import_feed(feed: pd.DataFrame, preset: str = "generic",
     df = pd.DataFrame({f: pick(f) for f in FIELDS})
     rating = pd.to_numeric(pick("rating"), errors="coerce")
     df["avg_rating"] = rating.where(rating.between(1, 5))                  # stars 1-5; anything else unknown
-    df["rating_count"] = pd.to_numeric(pick("rating_count"), errors="coerce").fillna(0).clip(lower=0).astype(int)
+    counts = pd.to_numeric(pick("rating_count"), errors="coerce").replace([np.inf, -np.inf], np.nan)
+    df["rating_count"] = counts.fillna(0).clip(lower=0).astype(int)      # odd values (text, inf) count as 0
     df["product_id"] = df["product_id"].map(_clean_id)
     for field in ("title", "description", "features", "brand"):
         df[field] = df[field].map(lambda v: clean_text(v) if isinstance(v, str) else "")   # NaN/None -> ""

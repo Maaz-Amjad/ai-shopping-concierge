@@ -23,7 +23,7 @@ from app.connection import add_to_claude_desktop, claude_desktop_config_path, cl
 from src import load_config  # noqa: E402
 from src.agent import chat_turn, run_action  # noqa: E402
 from src.pipeline import app_config, get_similar, load_resources, result_to_dict, search_products  # noqa: E402
-from src.store import (FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
+from src.store import (FIELDS, OPTIONAL_FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
                        list_stores, read_feed, shopify_feed_url, store_name_from)
 
 DEMO = "Demo appliance store"
@@ -35,7 +35,9 @@ FORMAT_NAMES = {"shopify": "Shopify product export", "shopify_json": "Shopify st
 FIELD_QUESTIONS = {"product_id": "Which column is the product's code or ID?", "title": "Which column is the product name?",
                    "price": "Which column is the price?", "brand": "Which column is the brand?",
                    "category": "Which column is the category?", "description": "Which column describes the product?",
-                   "features": "Which column lists features or tags?"}
+                   "features": "Which column lists features or tags?",
+                   "rating": "Which column is the average star rating (optional)?",
+                   "rating_count": "Which column is the number of ratings or reviews (optional)?"}
 NONE = "— not in my file —"
 
 st.set_page_config(page_title="Shopping Assistant", page_icon="🛒", layout="wide")
@@ -311,7 +313,7 @@ with add_tab:
                     st.info("I don't recognise this layout yet. Tell me which column is which:")
                     columns = [NONE] + [str(c) for c in feed.columns]
                     mapping = {}
-                    for field in FIELDS:
+                    for field in FIELDS + list(OPTIONAL_FIELDS):
                         choice = st.selectbox(FIELD_QUESTIONS[field], columns, key=f"map_{field}")
                         if choice != NONE:
                             mapping[field] = choice

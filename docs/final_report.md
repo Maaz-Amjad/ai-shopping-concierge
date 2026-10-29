@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 212 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 217 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -252,19 +252,28 @@ held each product's average rating and number of ratings (all 10,000 products; m
 4.2–4.6), so ratings became a fourth score term, fixed before any result was seen:
 
 - **S_rat** is the Bayesian average (20 × catalog mean + n × average) / (20 + n), min-max normalized within the
-  candidate pool. A product with few ratings stays near the catalog mean; one with none gets the mean, so an imported
-  store without ratings ranks exactly as before.
-- **Weight** chosen from {0, 0.05, 0.10, 0.15, 0.20}, taken from the semantic share. The rule did not say which
-  shoppers to optimize for; 0.10 was best for new shoppers (+0.007 judged-only NDCG@10 [−0.002, +0.019]) and for the
-  two groups averaged, while returning shoppers were flat (within ±0.002). Chosen weights: 0.60 semantic, 0.25
-  personal, 0.05 popularity, 0.10 rating.
+  candidate pool. A product with few ratings stays near the catalog mean; one with none gets the mean. When a
+  catalog has no ratings at all (e.g. an imported store), the rating share goes back to the semantic term, so it ranks
+  exactly as with the spec weights (a review found it did not at first; fixed with a failing test first).
+- **Weight** chosen from {0, 0.05, 0.10, 0.15, 0.20}, taken from the semantic share, by best dev judged-only NDCG@10.
+  The rule did not say which shoppers to optimize for, and the reading was settled after seeing dev results. New
+  shoppers alone, and the two groups weighted equally, pick 0.10 (new shoppers +0.007 [−0.002, +0.019]); returning
+  shoppers alone, and all (shopper, query) rows pooled, pick 0.20. Every difference among weights is under 0.01 and
+  inside its interval, so the choice rests on nothing firmer than this: 0.10 was taken because new shoppers are
+  every imported store's shoppers. Chosen weights: 0.60 semantic, 0.25 personal, 0.05 popularity, 0.10 rating.
 
 | Test, rating weight 0.10 vs 0 | Judged-only NDCG@10 change [95% CI] | Unjudged in top 10 |
 |---|---|---|
 | New shoppers (13 queries) | −0.009 [−0.031, +0.009] | 4.6 % |
 | Returning shoppers (13 queries, 8 users) | −0.006 [−0.015, +0.003] | 3.1 % |
 
-The effect on relevance is **neutral**: both intervals include zero. This is the expected outcome rather than a
+Both rows compare the same ranking with and without the rating term (the pre-registered "S5 vs S5 + rating"
+became this cleaner pairing, since the cold-start ranking already differs slightly from S5 through popularity). Counting
+unjudged items as not relevant instead gives larger drops (new −0.026, returning −0.022 vs weight 0), which mostly
+reflect the 3–5 % of top-10 items nobody has graded; and at weight 0.05 the returning-shopper interval lies just below
+zero (−0.007 [−0.016, −0.000]).
+
+The effect on relevance at 0.10 is **neutral**: both intervals include zero. This is the expected outcome rather than a
 failure, because the relevance labels grade fit to the request, not product quality; a rating term moves better-rated
 products up among similarly relevant ones, which this benchmark cannot reward. It can only show that relevance is not
 materially hurt. For example, for "quiet countertop ice maker under $200" the top three are unchanged and a 3.8-star

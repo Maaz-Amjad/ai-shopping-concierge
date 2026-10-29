@@ -142,7 +142,11 @@ def _price(v: Any) -> str:
 
 
 def _rating(avg: Any, count: Any) -> str:
-    return "not rated" if avg is None or pd.isna(avg) else f"{avg:.1f} ★ ({int(count or 0):,} ratings)"
+    avg, count = pd.to_numeric(avg, errors="coerce"), pd.to_numeric(count, errors="coerce")
+    if pd.isna(avg):
+        return "not rated"
+    n = int(count) if pd.notna(count) and math.isfinite(count) else 0
+    return f"{avg:.1f} ★ ({n:,} ratings)"
 
 
 def build_prompt(message: str, state: ChatState, res: Resources) -> str:

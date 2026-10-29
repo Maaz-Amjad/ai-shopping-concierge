@@ -95,6 +95,10 @@ def rank(cands: pd.DataFrame, user_vec: np.ndarray | None, w: Weights, *, catalo
          embeddings: np.ndarray) -> pd.DataFrame:
     """Re-rank a candidate pool (columns row, score = cosine to the query) with score components (NFR-7)."""
     rows = cands["row"].to_numpy(dtype=int)
+    ratings = pd.to_numeric(catalog["avg_rating"], errors="coerce") if "avg_rating" in catalog else None
+    has_ratings = ratings is not None and ratings.notna().any()
+    if not has_ratings and w.rat:          # no ratings at all: the rating share goes back to the semantic term,
+        w = Weights(w.sem + w.rat, w.pers, w.pop)          # so such a catalog ranks exactly as with spec weights
     w = w if user_vec is not None else w.cold_start()
     popularity = catalog["popularity"].to_numpy()
     out = pd.DataFrame({
@@ -106,9 +110,11 @@ def rank(cands: pd.DataFrame, user_vec: np.ndarray | None, w: Weights, *, catalo
         "s_pop": popularity_score(popularity[rows], popularity.max()),
         "popularity": popularity[rows],
     })
-    ratings = catalog["avg_rating"] if "avg_rating" in catalog else None
-    if ratings is not None and ratings.notna().any():
-        bayes = rating_score(ratings.to_numpy(dtype=np.float64)[rows], catalog["rating_count"].to_numpy()[rows],
+    if has_ratings:
+        counts = pd.to_numeric(catalog["rating_count"], errors="coerce") if "rating_count" in catalog \
+            else pd.Series(0.0, index=catalog.index)
+        counts = counts.replace([np.inf, -np.inf], np.nan).fillna(0).clip(lower=0)
+        bayes = rating_score(ratings.to_numpy(dtype=np.float64)[rows], counts.to_numpy(dtype=np.float64)[rows],
                              float(ratings.mean()))
         out["s_rat"] = minmax(bayes)
     else:
