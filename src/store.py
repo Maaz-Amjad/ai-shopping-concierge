@@ -119,11 +119,15 @@ def _text(feed: pd.DataFrame, column: str) -> pd.Series:
 
 def parse_stock(value: Any) -> bool | None:
     """In stock (True), out of stock (False) or unknown (None) from a stock flag, word or quantity."""
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, float) and np.isnan(value):
-        return None
+    if value is None or isinstance(value, (bool, np.bool_)):
+        return None if value is None else bool(value)
+    if isinstance(value, (int, float, np.number)):
+        return None if np.isnan(value) else bool(value > 0)              # a quantity
     text = str(value).strip().lower()
+    if text in ("", "nan", "none", "null", "n/a"):
+        return None
+    if text.startswith(("http://", "https://")):                          # schema.org/InStock style values
+        text = text.rstrip("/").rsplit("/", 1)[-1]
     if text in IN_STOCK_WORDS:
         return True
     if text in OUT_OF_STOCK_WORDS:
@@ -142,7 +146,8 @@ def row_stock(feed: pd.DataFrame, preset: str, column: str | None = None) -> pd.
         return feed[column].map(parse_stock).astype(object) if column in feed else unknown
     if preset == "shopify" and "Variant Inventory Qty" in feed:
         qty = pd.to_numeric(_text(feed, "Variant Inventory Qty").str.replace(",", ""), errors="coerce")
-        tracked = _text(feed, "Variant Inventory Tracker").ne("") if "Variant Inventory Tracker" in feed else True
+        tracked = _text(feed, "Variant Inventory Tracker").ne("") if "Variant Inventory Tracker" in feed \
+            else pd.Series(True, index=feed.index)                      # no tracker column: quantities count
         sellable = (qty > 0) | _text(feed, "Variant Inventory Policy").str.lower().eq("continue") | ~tracked
         return sellable.astype(object).where(qty.notna(), None)          # rows without a variant say nothing
     if preset == "woocommerce" and "In stock?" in feed:
@@ -186,7 +191,8 @@ def merge_woo_variations(feed: pd.DataFrame, log: dict) -> pd.DataFrame:
         var_stock = pd.Series(var["In stock?"].map(parse_stock).to_numpy(),
                               index=_text(var, "Parent").str.removeprefix("id:")).groupby(level=0).agg(_any_stock)
         blank = _text(out, "In stock?").eq("")
-        parent_stock = _text(out, "ID").map(var_stock)
+        parent_stock = _text(out, "ID").map(var_stock).astype(object).combine_first(   # parent named by id or SKU
+            _text(out, "SKU").map(var_stock).astype(object))
         fill = blank & parent_stock.notna()
         out.loc[fill, "In stock?"] = parent_stock[fill].map(lambda v: "1" if v else "0")
     no_price = _text(out, "Sale price").eq("") & _text(out, "Regular price").eq("")
@@ -269,6 +275,8 @@ def build_store(name: str, source: str | Path, preset: str = "generic", mapping:
                 model: Any = None, cfg: dict | None = None) -> dict:
     """Import a feed and save the catalog and its embeddings under stores/<name>/ (loadable by load_resources)."""
     check_store_name(name)
+    if not str(source).lower().startswith(("http://", "https://")):
+        source = Path(source).resolve()               # absolute, so a later --refresh works from any folder
     return build_store_from_feed(name, read_feed(source), preset, mapping, model, cfg, source=str(source))
 
 
@@ -276,7 +284,7 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
                           mapping: dict[str, str] | None = None, model: Any = None, cfg: dict | None = None,
                           source: str = "upload", site: str | None = None) -> dict:
     """Same as build_store for a feed already read (the demo app's upload and store-link flows)."""
-    from src.embed import encode_products, load_model, save_embeddings
+    from src.embed import encode_products, load_model
 
     check_store_name(name)
     cfg = cfg or load_config()
@@ -294,10 +302,7 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
         fresh = {keys[i]: v for i, v in zip(todo, enc)}
     emb = np.vstack([fresh.get(k, old_vectors.get(k)) for k in keys]).astype(np.float32)
     out.mkdir(parents=True, exist_ok=True)
-    save_embeddings(emb, catalog["product_id"].tolist(), out)
-    tmp = out / "catalog.pkl.tmp"                     # catalog last and atomic: its change makes the API reload
-    catalog.to_pickle(tmp)
-    os.replace(tmp, out / "catalog.pkl")
+    save_store_files(out, catalog, emb)
     ids = set(catalog["product_id"])
     log.update(added=len(ids - set(old_texts)), removed=len(set(old_texts) - ids),
                changed=sum(pid in old_texts and old_texts[pid] != text for pid, text in keys),
@@ -306,6 +311,31 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
                embedding_model=cfg["embedding"]["model"])
     (out / "import_log.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     return log
+
+
+def save_store_files(out: Path, catalog: pd.DataFrame, emb: np.ndarray) -> None:
+    """Write embeddings, ids and catalog to temporary files, then swap them in (catalog last: its change makes the
+    API reload). If a swap fails, the previous files are put back, so the store never mixes two imports."""
+    files = {"embeddings.npy": emb.astype(np.float32),
+             "product_ids.npy": np.asarray(catalog["product_id"].tolist(), dtype=str)}
+    for name, arr in files.items():
+        with open(out / f"{name}.tmp", "wb") as f:
+            np.save(f, arr)
+    catalog.to_pickle(out / "catalog.pkl.tmp")
+    moved = []
+    try:
+        for name in (*files, "catalog.pkl"):
+            if name != "catalog.pkl" and (out / name).exists():
+                os.replace(out / name, out / f"{name}.bak")
+                moved.append(name)
+            os.replace(out / f"{name}.tmp", out / name)
+    except Exception:
+        for name in moved:
+            os.replace(out / f"{name}.bak", out / name)
+        raise
+    finally:
+        for leftover in [*out.glob("*.tmp"), *out.glob("*.bak")]:
+            leftover.unlink(missing_ok=True)
 
 
 def previous_vectors(store_dir: Path, model_name: str) -> tuple[dict, dict]:
@@ -317,9 +347,9 @@ def previous_vectors(store_dir: Path, model_name: str) -> tuple[dict, dict]:
         log = json.loads((store_dir / "import_log.json").read_text(encoding="utf-8"))
         catalog = pd.read_pickle(store_dir / "catalog.pkl")
         emb, ids = load_embeddings(store_dir)
-    except (OSError, ValueError):
+    except Exception:  # noqa: BLE001 - missing or corrupt files: embed everything again
         return {}, {}
-    if log.get("embedding_model", model_name) != model_name or len(emb) != len(catalog) \
+    if log.get("embedding_model") != model_name or len(emb) != len(catalog) \
             or list(ids) != [str(p) for p in catalog["product_id"]]:
         return {}, {}
     texts = dict(zip(catalog["product_id"], catalog["product_text"]))
@@ -338,9 +368,8 @@ def refresh_store(name: str, model: Any = None, cfg: dict | None = None) -> dict
     if source in ("", "upload"):
         raise ValueError("this store was added from an uploaded file; upload the new export to update it")
     url = source
-    if prev.get("preset") == "shopify_json" and not source.lower().startswith(("http://", "https://")) \
-            and not source.lower().endswith(".json"):
-        url = shopify_feed_url(source)                # the Shopify address typed in the app
+    if prev.get("preset") == "shopify_json" and not source.lower().split("?")[0].endswith(".json"):
+        url = shopify_feed_url(source)                # the Shopify address typed in the app, with or without https
     elif not source.lower().startswith(("http://", "https://")) and not Path(source).exists():
         raise ValueError(f"the original file {source} is no longer there; upload the new export to update it")
     return build_store_from_feed(name, read_feed(url), prev.get("preset", "generic"), prev.get("mapping") or None,
@@ -430,6 +459,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--preset", default="generic", choices=sorted(PRESETS))
     parser.add_argument("--map", default="", help="field=column pairs, e.g. 'title=Name,price=Cost'")
     args = parser.parse_args(argv)
+    if args.every < 0:
+        parser.error("--every must be 0 or more minutes")
+    if args.refresh and (args.file or args.map):
+        parser.error("--refresh re-reads the saved source with the saved settings; --file and --map are not used")
     if args.refresh:
         while True:
             try:

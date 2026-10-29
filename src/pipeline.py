@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src import ROOT, load_config, set_seed
-from src.filters import available_mask, relaxation_suggestions
+from src.filters import available_mask, build_mask, relaxation_suggestions
 from src.generate import (MAX_WORDS, GenerationResult, answer_text, generate_answer, no_result_answer,
                           template_answer, unpriced_section)
 from src.llm import CallLimitReached, LLMClient, provider_settings
@@ -120,6 +120,12 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
         answer = GenerationResult(no_result_answer(suggestions or []), None, fallback="no_result")
     else:
         answer = GenerationResult(template_answer(items, n), None, fallback="template")
+    if items.empty and "in_stock" in res.catalog:      # say so when the only matches are sold out (13.2)
+        matches = build_mask(res.catalog.drop(columns="in_stock"), parsed, use_exclusions)
+        sold = int((matches & ~available_mask(res.catalog)).sum())
+        if sold:
+            answer.text += (f"\n{sold} matching products are out of stock right now." if sold > 1 else
+                            "\n1 matching product is out of stock right now.")
     if not result.unpriced.empty:
         answer.text += "\n" + unpriced_section(res.catalog.iloc[result.unpriced["row"].to_numpy()])
     timings["generate"] = (time.perf_counter() - t) * 1000

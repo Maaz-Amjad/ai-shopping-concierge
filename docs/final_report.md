@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 225 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 235 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -293,13 +293,16 @@ stock" and untracked inventory (combined over a product's variant rows), the ava
 Shopify store link, WooCommerce "In stock?" and backorders (a variable product is in stock when any variation is), or
 any availability column. Out-of-stock products are removed in the same deterministic mask as the other hard limits,
 so search, similar products and the chat never suggest them; unknown stock counts as available. A product saved to the
-shortlist that later sells out is labelled, and "buy" says so.
+shortlist that later sells out is labelled, "buy" says so, and when every match is sold out the no-result answer says
+how many are out of stock.
 
 Stores are kept current by re-reading their source (`--refresh`, optionally on a schedule, or a button in the app).
-Only products whose text changed are embedded again, so an unchanged 300-product store updates in under 3 seconds
-without loading the embedding model; the catalog file is replaced atomically and the API reloads it. Checked end to
-end on a copy of the 300-product sample export with 20 products marked sold out: none appeared in five searches or in
-the similar-product lists of 30 products. The benchmark catalog has no stock data, so no result above changes.
+Only products whose text changed are embedded again; the new files are swapped in together (the previous ones are
+restored if a swap fails) and the API reloads the store. The unit tests cover each platform's stock fields, the
+incremental update and a failed save. Two one-off manual checks (not saved as result files): an unchanged 300-product
+store updated in about 3 seconds without loading the embedding model, and on a copy of the sample export with 20
+products marked sold out, none appeared in five searches or in the similar-product lists of 30 products. The benchmark
+catalog has no stock data, so no result above changes.
 
 ## 13. Future work
 

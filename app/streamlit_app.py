@@ -373,7 +373,7 @@ with add_tab:
                     st.success(f"Updated: {upd['products']:,} products ({upd['added']} new, {upd['removed']} "
                                f"removed, {upd['changed']} changed, {upd['out_of_stock']} out of stock).")
                 except ValueError as exc:
-                    st.warning(f"Couldn't update automatically: {exc}.")
+                    st.warning(f"Couldn't update automatically: {md(str(exc))}.")
                 except Exception:  # noqa: BLE001 - network problems get one friendly message
                     st.error("Couldn't read your products right now. Please try again later.")
 

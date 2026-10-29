@@ -25,12 +25,16 @@ def price_mask(df: pd.DataFrame, pq: ParsedQuery) -> np.ndarray:
     return m
 
 
+def out_of_stock(value: object) -> bool:
+    """True only for a known "out of stock" flag (False or numpy False); None/NaN = unknown = available."""
+    return value is not None and not (isinstance(value, float) and np.isnan(value)) and not bool(value)
+
+
 def available_mask(df: pd.DataFrame) -> np.ndarray:
     """False only for products marked out of stock (Phase 13.2); unknown stock counts as available."""
     if "in_stock" not in df:
         return np.ones(len(df), dtype=bool)
-    return np.array([v is None or (isinstance(v, float) and np.isnan(v)) or bool(v) for v in df["in_stock"]],
-                    dtype=bool)
+    return np.array([not out_of_stock(v) for v in df["in_stock"]], dtype=bool)
 
 
 def non_price_mask(df: pd.DataFrame, pq: ParsedQuery, use_exclusions: bool = True) -> np.ndarray:

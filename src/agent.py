@@ -15,7 +15,7 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from src.filters import build_mask
+from src.filters import build_mask, out_of_stock
 from src.generate import Answer, user_prices, validate_answer
 from src.llm import CallLimitReached, QuotaExhausted
 from src.parse import ParsedQuery, validate
@@ -334,7 +334,7 @@ def _buy(product_id: str, state: ChatState, res: Resources, link: str | None) ->
     row = rows_of([product_id], res).iloc[0]
     url = link.format(id=row["product_id"]) if link else None
     title = str(row["title"])[:80]
-    if row.get("in_stock") is False:
+    if out_of_stock(row.get("in_stock")):
         return TurnResult("buy", f"“{title}” is currently out of stock at the store"
                           + ("; its product page shows when it is back. I don't place orders." if url else "."),
                           state, cards([row["product_id"]], res, link), link=url)
