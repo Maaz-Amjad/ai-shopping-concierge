@@ -153,3 +153,26 @@ def test_rank_rating_term_hand_computed_and_zero_weight_changes_nothing():
                                                                                          "rating_count"]),
                       embeddings=e)
     assert plain["final"].tolist() == no_ratings["final"].tolist() and (no_ratings["s_rat"] == 0).all()
+
+
+# ---- verifier findings, Phase 13.1 ----------------------------------------------------------------------
+
+def test_production_weights_on_a_catalog_without_ratings_rank_exactly_like_the_spec():
+    catalog, e = toy_catalog()                                   # no rating columns (older store imports)
+    cands = pd.DataFrame({"row": [0, 1, 3], "score": [0.9, 0.85, 0.7]})
+    u = np.array([0.6, 0.8], dtype=np.float32)
+    for user in (None, u):
+        spec = rank(cands, user, Weights(0.7, 0.25, 0.05), catalog=catalog, embeddings=e)
+        prod = rank(cands, user, Weights(0.6, 0.25, 0.05, 0.1), catalog=catalog, embeddings=e)
+        assert prod["product_id"].tolist() == spec["product_id"].tolist()
+        assert prod["final"].tolist() == pytest.approx(spec["final"].tolist())
+
+
+def test_rank_tolerates_messy_rating_columns():
+    catalog, e = toy_catalog()
+    cands = pd.DataFrame({"row": [0, 1, 3], "score": [0.9, 0.5, 0.7]})
+    w = Weights(0.6, 0.25, 0.05, 0.1)
+    no_count = catalog.assign(avg_rating=[4.5, 3.0, 4.0, np.nan])                      # no rating_count column
+    assert len(rank(cands, None, w, catalog=no_count, embeddings=e)) == 3
+    messy = catalog.assign(avg_rating=["4.5", "x", None, 4.0], rating_count=["10", "x", None, np.inf])
+    assert len(rank(cands, None, w, catalog=messy, embeddings=e)) == 3

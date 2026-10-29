@@ -184,3 +184,20 @@ def test_optional_rating_columns_are_read_and_checked():
     assert mapped["avg_rating"].iloc[0] == 4.6
     plain, _ = import_feed(feed[["product_id", "title"]], "generic")
     assert plain["avg_rating"].isna().all() and (plain["rating_count"] == 0).all()
+
+
+def test_non_finite_rating_counts_are_unknown_not_a_crash():
+    feed = pd.DataFrame({"product_id": ["a", "b"], "title": ["A", "B"], "rating": [4.0, 4.0],
+                         "rating_count": ["inf", "1e400"]})
+    cat, _ = import_feed(feed, "generic")
+    assert cat["rating_count"].tolist() == [0, 0]
+
+
+def test_column_mapping_questions_cover_the_optional_rating_columns():
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(__file__).parents[1].joinpath("app", "streamlit_app.py").read_text(encoding="utf-8"))
+    keys = next(ast.literal_eval(node.value).keys() for node in tree.body if isinstance(node, ast.Assign)
+                and getattr(node.targets[0], "id", "") == "FIELD_QUESTIONS")
+    assert set(store.FIELDS) | set(store.OPTIONAL_FIELDS) <= set(keys)

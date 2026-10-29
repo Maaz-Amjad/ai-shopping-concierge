@@ -209,3 +209,10 @@ def test_cards_and_comparison_show_ratings(tmp_path):
     assert [r["rating"] for r in out.comparison] == ["4.5 ★ (1,234 ratings)", "not rated"]
     shown = run_action("show_shortlist", {}, ChatState(shortlist=["A"]), res)
     assert shown.products[0]["avg_rating"] == 4.46 and shown.products[0]["rating_count"] == 1234
+
+
+def test_comparison_rating_with_a_missing_count(tmp_path):
+    res = agent_res(tmp_path, [call("compare", items=[1, 2])], [])
+    res.catalog = res.catalog.assign(avg_rating=[4.5, 4.0, 3.0], rating_count=[np.nan, 3, 4])
+    out = chat_turn("compare 1 and 2", ChatState(shown=["A", "B"]), res)
+    assert [r["rating"] for r in out.comparison] == ["4.5 ★ (0 ratings)", "4.0 ★ (3 ratings)"]
