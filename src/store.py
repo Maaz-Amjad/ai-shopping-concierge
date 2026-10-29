@@ -245,10 +245,22 @@ def store_name_from(text: str) -> str:
 
 
 def shopify_feed_url(address: str) -> str:
-    """'mystore.com' or 'https://mystore.com/collections/x' -> 'https://mystore.com/products.json'."""
-    host = re.sub(r"^https?://", "", address.strip()).split("/")[0]
-    if not host:
-        raise ValueError("enter the store's web address, e.g. mystore.com")
+    """'mystore.com' or 'https://mystore.com/collections/x?y' -> 'https://mystore.com/products.json'.
+
+    Only public domain names are accepted (no IP addresses, localhost or intranet names), so the link can only
+    reach a real online store.
+    """
+    import ipaddress
+
+    host = re.split(r"[/?#]", re.sub(r"^https?://", "", address.strip(), flags=re.I))[0].lower()
+    host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host          # drop a port
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        is_ip = True
+    except ValueError:
+        is_ip = False
+    if not host or is_ip or "." not in host or host.endswith((".local", ".localhost", ".internal"))             or not re.fullmatch(r"[a-z0-9.-]+", host):
+        raise ValueError("enter the store's public web address, e.g. mystore.com")
     return f"https://{host}/products.json"
 
 

@@ -59,7 +59,7 @@ def connection_state() -> dict:
     return {"proc": None}
 
 
-MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>#+!|~$-])")
+MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>#+!|~$:.-])")    # ':' and '.' stop bare links being auto-linked
 
 
 def md(text) -> str:
@@ -154,7 +154,10 @@ with shop_tab:
             st.session_state["query"] = example
     query = st.text_input("Your request", key="query", label_visibility="collapsed",
                           placeholder="e.g. quiet portable countertop ice maker under $150")
-    key = (query, user_id, n, store, f_max, f_cat, f_brand)
+    if st.session_state.get("result", {}).get("store", store) != store:
+        st.session_state.pop("result", None)            # never show another shop's results
+    key = (query, user_id, store)                       # a new request, shopper or shop searches right away;
+    st.caption("Changed the number of suggestions or the optional limits? Press Search to update.")
     if st.button("Search", type="primary") or (query and st.session_state.get("last") != key):
         if not query.strip():
             st.warning("Please type what you are looking for.")
@@ -164,7 +167,7 @@ with shop_tab:
                 out = search_products(query, res, n=n, user_id=user_id, max_price=f_max or None,
                                       category=None if f_cat == "Any" else f_cat,
                                       brand=None if f_brand == "Any" else f_brand)
-            st.session_state["result"] = result_to_dict(query, out, res)
+            st.session_state["result"] = {**result_to_dict(query, out, res), "store": store}
 
     result = st.session_state.get("result")
     if result:
@@ -197,7 +200,8 @@ with shop_tab:
                         st.progress(min(max(p["s_pop"], 0.0), 1.0))
                     with left.expander("Similar products"):
                         for _, s in get_similar(p["product_id"], res, 3).iterrows():
-                            st.markdown(f"- {md(s['title'])[:90]} — {money(None if pd.isna(s['price']) else s['price'])}")
+                            st.markdown(f"- {md(str(s['title'])[:90])} — "
+                                        f"{money(None if pd.isna(s['price']) else s['price'])}")
         with st.expander("Details for the curious"):
             t = result["timings_ms"]
             st.caption(f"Understanding {t['parse']:.0f} ms · searching {t['retrieve']:.0f} ms · ranking "
@@ -264,7 +268,7 @@ with add_tab:
                 source = st.session_state.get("shopify_source", "shopify")
                 st.success(f"Found {len(feed):,} products.")
         if feed is not None:
-            ready = not mapping or {"product_id", "title"} <= set(mapping)
+            ready = mapping is None or {"product_id", "title"} <= set(mapping)   # None = format recognised
             if not ready:
                 st.warning("Please choose at least the product code/ID and the product name columns.")
             if st.button(f"Add my products as “{name}”", type="primary", disabled=not ready):
@@ -294,12 +298,17 @@ with add_tab:
         if running:
             st.markdown("🟢 **The connection is on.**")
             c1, c2 = st.columns(2)
-            c1.link_button("See it on a sample web page", f"{connection.URL}/?store={target}")
-            if state["proc"] is not None and c2.button("Turn the connection off"):
-                connection.stop(state["proc"])
-                state["proc"] = None
-                st.rerun()
-            if state["proc"] is None:
+            c1.link_button("See it on a sample web page", f"{connection.URL}/" + (f"?store={target}" if target else ""))
+            if connection.started_by_app():
+                if c2.button("Turn the connection off"):
+                    if state["proc"] is not None:
+                        connection.stop(state["proc"])
+                    else:
+                        connection.stop_previous()      # started before the app was restarted
+                    state["proc"] = None
+                    st.rerun()
+                st.caption("To change the website address, turn the connection off and on again.")
+            else:
                 st.caption("The connection was started outside this app; stop it where it was started.")
         else:
             st.markdown("⚪ **The connection is off.**")
@@ -332,7 +341,9 @@ with add_tab:
                            + (" (Your previous settings were backed up.)" if backup else ""))
             except (OSError, ValueError) as exc:
                 st.error(f"Couldn't update Claude Desktop's settings: {exc}")
-        st.download_button("Or download the settings file", file_name="claude_desktop_config.json",
+        st.caption("Prefer to do it by hand, or using another AI assistant? Download the settings and give them to "
+                   "whoever manages that assistant. Don't replace your existing settings file with this one.")
+        st.download_button("Download the settings", file_name="shopping-assistant-settings.json",
                             mime="application/json",
                             data=json.dumps(claude_desktop_entry(store), indent=2))
 
@@ -351,7 +362,12 @@ with about_tab:
 5. **Writing a short answer** – the AI writes a few sentences using only the facts of the products shown. A checker
    rejects any product, price or brand that isn't really there.
 
-**How well it works** (tested on 15 requests it had never seen): every suggested product kept to the stated limits
-(plain search: 43–63 %), the limits were understood correctly 94 % of the time, and all 22 written answers passed the
-fact check. Full results: `docs/final_report.md`.
+**How well it works**, on 15 test requests that were never used to tune it:
+
+- Every suggested product kept to the stated limits (on the 8 test requests that had limits and matching products;
+  plain search without step 2 kept to them only 43–63 % of the time).
+- Picking out the limits scored 0.94 on a 0–1 accuracy scale (F1).
+
+Across all 25 benchmark requests, all 22 written answers passed the fact check (the other 3 had no matching products
+and got a plain "nothing matches" answer). Full results: `docs/final_report.md`.
 """)

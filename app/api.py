@@ -55,6 +55,7 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     cache: dict[tuple[str | None, float], Resources] = {}
 
     def resources(store: str | None) -> Resources:
+        store = store or None                                   # "" (e.g. ?store=) means the default catalog
         if store is not None and not valid_store_name(store):
             raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
         key = (store, store_version(store))
@@ -104,6 +105,7 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     @app.get("/", response_class=HTMLResponse)
     def demo_page(store: str | None = None) -> str:
         """A blank 'store page' with the widget pasted in, exactly as a store owner would (?store=<name>)."""
+        store = store or None
         if store is not None and not valid_store_name(store):
             raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
         page = (APP_DIR / "demo_store.html").read_text(encoding="utf-8")

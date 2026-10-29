@@ -29,7 +29,7 @@ def test_demo_app_searches_personalizes_and_escapes_store_text(tmp_path, monkeyp
     at.text_input(key="query").set_value("ice maker").run()
     assert not at.exception
     assert "`category: Ice Makers`" in " ".join(m.value for m in at.markdown)       # "I understood: ..."
-    assert at.info[0].value.startswith("Two \[ice makers\]\(http://x\)")      # link from store/LLM text escaped
+    assert at.info[0].value.startswith(r"Two \[ice makers\]\(http\://x\)")    # links and bare URLs escaped
     cards = [m.value for m in at.markdown if m.value.startswith("**1.")]
     assert cards and "ice maker a" in cards[0]
     at.sidebar.selectbox[1].select_index(1).run()                                    # returning shopper
