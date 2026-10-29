@@ -40,7 +40,7 @@ def test_search_returns_filters_products_scores_and_answer(client):
     assert r.headers.get("access-control-allow-origin") is None          # no Origin header sent
     cors = client.post("/search", json={"query": " "}, headers={"Origin": "https://shop.example"})
     assert cors.status_code == 400 and cors.json()["detail"] == "Please enter a query."
-    assert cors.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-origin" not in cors.headers                # origin not in config allow-list
 
 
 def test_similar_and_widget_and_demo_page(client):

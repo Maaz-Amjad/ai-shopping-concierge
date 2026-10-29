@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import random
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,7 @@ REQUEST_TIMEOUT_MS = 10 * 60 * 1000
 QUOTA_DAY_TZ = timezone(timedelta(hours=-7))
 
 _last_call_at: dict[str, float] = {}  # process-wide rate limiter state, per model
+_call_lock = threading.Lock()  # one uncached call at a time per process (API thread pool, shared clients)
 
 
 class QuotaExhausted(RuntimeError):
@@ -184,6 +186,13 @@ class LLMClient:
         if key in self._cache:
             self.cache_hits += 1
             return self._cache[key]
+        with _call_lock:                 # cap check, rate limit, call and cache append happen as one step
+            if key in self._cache:       # another thread just fetched it
+                self.cache_hits += 1
+                return self._cache[key]
+            return self._call_and_store(key, prompt, schema, prompt_version)
+
+    def _call_and_store(self, key: str, prompt: str, schema: type[BaseModel] | None, prompt_version: str) -> str:
         text = self._call_with_backoff(prompt, schema, prompt_version)
         if schema is not None:
             schema.model_validate_json(text)  # raises ValidationError (empty text included)

@@ -94,7 +94,11 @@ paste two lines into any page:
 Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
 (`product_id,title,brand,category,price,description,features`). API: `POST /search`, `GET /similar/{id}`,
 `GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in
-`stores/` (not committed); their shoppers have no history, so personalization is off for them.
+`stores/` (not committed); their shoppers have no history, so personalization is off for them. Browsers may call the
+API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIERGE_ALLOWED_ORIGINS`
+(comma-separated), so add your store's domain there. Each server process makes at most `app.max_llm_calls` Gemini
+calls (default 300), then answers from catalog fields only. The API listens on localhost; put it behind a proxy with
+authentication before exposing it.
 
 **MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). For Claude Desktop or
 Claude Code, add:

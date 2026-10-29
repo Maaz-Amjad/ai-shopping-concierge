@@ -40,9 +40,10 @@ def load_resources(cfg: dict | None = None, max_calls: int | None = None, store:
 
     cfg = cfg or load_config()
     set_seed(cfg["seed"])
-    if store:
-        from src.store import STORES_DIR
+    if store is not None:
+        from src.store import STORES_DIR, check_store_name
 
+        check_store_name(store)                    # never a path: names are plain identifiers
         store_dir = STORES_DIR / store
         catalog = pd.read_pickle(store_dir / "catalog.pkl")
         embeddings, product_ids = load_embeddings(store_dir)
@@ -56,7 +57,7 @@ def load_resources(cfg: dict | None = None, max_calls: int | None = None, store:
                        temperature=llm["temperature"], max_output_tokens=llm["max_output_tokens"],
                        max_calls=max_calls)
     brands = sorted(catalog["brand"].dropna().astype(str).unique().tolist())
-    profiles = {} if store else build_profiles(load_interactions(), catalog, embeddings)
+    profiles = {} if store is not None else build_profiles(load_interactions(), catalog, embeddings)
     return Resources(cfg, catalog, embeddings, DenseIndex(embeddings), load_model(cfg["embedding"]["model"]),
                      CatalogMeta.from_catalog(catalog), profiles, client, brands)
 

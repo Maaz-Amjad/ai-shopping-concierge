@@ -193,7 +193,7 @@ words; Streamlit and MCP wrapper cut
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 160 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 169 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 

@@ -2,10 +2,12 @@
 
 Run: .venv/Scripts/python.exe -m uvicorn app.api:app --port 8000
 Store selection: ?store=<name> per request (stores built with `python -m src.store`); no store = benchmark catalog.
+Binds to 127.0.0.1 by default; put it behind a reverse proxy with authentication before exposing it publicly.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -14,7 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from src import load_config
 from src.pipeline import Resources, get_similar, load_resources, records, result_to_dict, search_products
+from src.store import STORES_DIR, valid_store_name
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -30,22 +34,41 @@ class SearchRequest(BaseModel):
     brand: str | None = None
 
 
-def create_app(loader: Callable[[str | None], Resources] | None = None) -> FastAPI:
-    """Build the app; `loader(store)` returns Resources (cached per store). Tests pass a fake loader."""
-    loader = loader or (lambda store: load_resources(store=store))
-    cache: dict[str | None, Resources] = {}
+def store_version(store: str | None) -> float:
+    """Changes when a store is re-imported, so the API reloads it."""
+    path = STORES_DIR / store / "catalog.pkl" if store else None
+    return path.stat().st_mtime if path is not None and path.exists() else 0.0
+
+
+def create_app(loader: Callable[[str | None], Resources] | None = None,
+               allowed_origins: list[str] | None = None) -> FastAPI:
+    """Build the app; `loader(store)` returns Resources (cached per store and import). Tests pass a fake loader.
+
+    LLM calls are capped per process (config app.max_llm_calls, NFR-3) and only listed origins may call the API
+    from a browser (config app.allowed_origins or $CONCIERGE_ALLOWED_ORIGINS, comma-separated).
+    """
+    cfg = load_config()
+    app_cfg = cfg.get("app", {})
+    loader = loader or (lambda store: load_resources(cfg, max_calls=app_cfg.get("max_llm_calls"), store=store))
+    env_origins = [o.strip() for o in os.environ.get("CONCIERGE_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    origins = allowed_origins if allowed_origins is not None else env_origins or app_cfg.get("allowed_origins", [])
+    cache: dict[tuple[str | None, float], Resources] = {}
 
     def resources(store: str | None) -> Resources:
-        if store not in cache:
+        if store is not None and not valid_store_name(store):
+            raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
+        key = (store, store_version(store))
+        if key not in cache:
             try:
-                cache[store] = loader(store)
+                cache[key] = loader(store)
             except FileNotFoundError:
                 raise HTTPException(404, f"unknown store {store!r}; import it with python -m src.store") from None
-        return cache[store]
+        return cache[key]
 
     app = FastAPI(title="Shopping Concierge API", version="1.0",
                   description="Semantic product search with enforced filters and grounded answers (read-only).")
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"],
+                       allow_headers=["Content-Type"])
 
     @app.get("/health")
     def health() -> dict:

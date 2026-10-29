@@ -16,3 +16,7 @@ llm:
   call_log_path: artifacts/llm_calls.jsonl
 generation: {top_n: 5, max_words: 120}
 eval: {k: [5, 10], pool_depth: 10, bootstrap_resamples: 1000}
+# Phase 11 demo/API/MCP (NFR-3 spending cap; read-only service)
+app:
+  max_llm_calls: 300                  # per server process (Flash-Lite free tier: 500 RPD); then template answers
+  allowed_origins: ["http://localhost:8000", "http://127.0.0.1:8000"]   # add each store's domain for the widget

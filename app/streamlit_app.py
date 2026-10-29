@@ -11,11 +11,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import re  # noqa: E402
+import tempfile  # noqa: E402
+
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
+from src import load_config  # noqa: E402
 from src.pipeline import get_similar, load_resources, result_to_dict, search_products  # noqa: E402
-from src.store import PRESETS, list_stores  # noqa: E402
+from src.store import PRESETS, STORES_DIR, build_store, list_stores  # noqa: E402
 
 BENCHMARK = "Appliances (benchmark catalog)"
 EXAMPLES = ["quiet portable countertop ice maker under $150", "refrigerator water filter, not Samsung",
@@ -26,8 +30,23 @@ st.set_page_config(page_title="Shopping Concierge", page_icon="🛒", layout="wi
 
 
 @st.cache_resource(show_spinner="Loading catalog, embeddings and model…")
+def load(store: str | None, version: float):
+    cfg = load_config()
+    return load_resources(cfg, max_calls=cfg.get("app", {}).get("max_llm_calls"), store=store)
+
+
 def resources(store: str | None):
-    return load_resources(store=store)
+    """Cached per store and per import (a re-imported store is reloaded)."""
+    path = STORES_DIR / store / "catalog.pkl" if store else None
+    return load(store, path.stat().st_mtime if path is not None and path.exists() else 0.0)
+
+
+MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>#+!|~$-])")
+
+
+def md(text) -> str:
+    """Escape markdown so store text cannot add links, images or formatting."""
+    return MD_SPECIAL.sub(lambda m: "\\" + m.group(1), str(text or ""))
 
 
 @st.cache_data(show_spinner=False)
@@ -117,7 +136,7 @@ with search_tab:
             st.caption(" · ".join(notes))
 
         st.markdown("#### Answer")
-        st.info(result["answer"])
+        st.info(md(result["answer"]))
         if flags.get("generation_fallback") == "template":
             st.caption("The LLM answer did not pass the grounding check twice, so this answer was built from catalog "
                        "fields only.")
@@ -127,10 +146,10 @@ with search_tab:
             for p in result["products"]:
                 with st.container(border=True):
                     left, right = st.columns([4, 2])
-                    left.markdown(f"**{p['rank']}. {p['title']}**")
+                    left.markdown(f"**{p['rank']}. {md(p['title'])}**")
                     left.caption(" · ".join(x for x in [p["brand"], p["category"], money(p["price"])] if x))
                     if p.get("reason"):
-                        left.write(p["reason"])
+                        left.markdown(md(p["reason"]))
                     right.metric("Score", f"{p['final']:.2f}")
                     right.caption(f"relevance {p['s_sem']:.2f} · personal {p['s_pers']:.2f} · "
                                   f"popularity {p['s_pop']:.2f}")
@@ -156,11 +175,10 @@ with connect_tab:
     new_name = c1.text_input("Store name", value="mystore")
     preset = c2.selectbox("Format", list(PRESETS), index=list(PRESETS).index("shopify"))
     if uploaded and st.button("Import and index"):
-        from src.store import STORES_DIR, build_store
-
-        path = STORES_DIR / f"_upload_{uploaded.name}"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(uploaded.getvalue())
+        suffix = ".json" if uploaded.name.lower().endswith(".json") else ".csv"   # only the extension is used
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(uploaded.getvalue())
+        path = Path(tmp.name)
         try:
             with st.spinner("Cleaning and embedding products…"):
                 log = build_store(new_name, path, preset, model=res.model)
