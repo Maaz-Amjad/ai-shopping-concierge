@@ -113,7 +113,9 @@ class DenseIndex:
         """Phase 13.5: filter-first with dense and keyword (BM25) scores blended over the allowed products only."""
         rows = np.flatnonzero(mask)
         dense = (self.embeddings[rows] @ query_vec).astype(np.float64)
-        return top_k(hybrid_scores(dense, np.asarray(lexical_scores, dtype=np.float64)[rows], alpha), k, rows)
+        out = top_k(hybrid_scores(dense, np.asarray(lexical_scores, dtype=np.float64)[rows], alpha), k, rows)
+        out["cosine"] = (self.embeddings[out["row"].to_numpy()] @ query_vec).astype(np.float64)   # the true cosine
+        return out
 
     def post_filter(self, query_vec: np.ndarray, mask: np.ndarray, n: int,
                     k0: int = 100, k_max: int = 1000) -> tuple[pd.DataFrame, int]:
@@ -172,5 +174,7 @@ def retrieve(pq: ParsedQuery, mode: str, pool_size: int, *, catalog: pd.DataFram
         cands = index.filter_first(query_vec, mask, pool_size)
     unpriced = pd.DataFrame(columns=["row", "score", "rank"])
     if mode != "dense" and has_price_filter(pq) and len(cands) < n:
-        unpriced = index.filter_first(query_vec, unpriced_mask(catalog, pq, use_exclusions), n)
+        unpriced_rows = unpriced_mask(catalog, pq, use_exclusions)
+        unpriced = index.hybrid_filter_first(query_vec, lexical_scores, unpriced_rows, n, alpha) \
+            if alpha > 0 and lexical_scores is not None else index.filter_first(query_vec, unpriced_rows, n)
     return RetrievalResult(cands, int(mask.sum()), price_excluded, unpriced, k_used)

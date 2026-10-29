@@ -308,6 +308,12 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
         raise ValueError("no products left after import")
     log.update(source=source, preset=preset, mapping=mapping or {}, site=site_host(site))
     with store_lock(name):
+        previous = STORES_DIR / name / "catalog.pkl"
+        if previous.exists():
+            try:
+                catalog = keep_newer_rows(catalog, pd.read_pickle(previous))
+            except Exception:  # noqa: BLE001 - an unreadable old catalog is simply replaced
+                pass
         return write_store(name, catalog, log, model, cfg)
 
 
@@ -406,22 +412,77 @@ def woocommerce_webhook_feed(product: dict) -> pd.DataFrame:
         "Published": "1" if product.get("status") == "publish" else "0"}])
 
 
-def drop_stale(new: pd.DataFrame, catalog: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    """Skip webhook rows that are not newer than the stored version (by the platform's updated_at, which is inside
-    the signed body): a replayed or out-of-order delivery cannot bring back an old price or stock state."""
-    if new.empty or "source_updated_at" not in catalog or "source_updated_at" not in new:
-        return new, []
+TOMBSTONE_DAYS = 30
+
+
+def _stored_times(catalog: pd.DataFrame) -> tuple[dict, dict]:
+    """Stored platform times by product id and by platform id (rows without a platform id are not matched by it)."""
+    if "source_updated_at" not in catalog:
+        return {}, {}
     stored = pd.to_datetime(catalog["source_updated_at"], errors="coerce", utc=True)
     by_id = dict(zip(catalog["product_id"], stored))
-    by_sid = dict(zip(catalog["source_id"].astype(str), stored)) if "source_id" in catalog else {}
-    stale = []
+    sids = catalog["source_id"] if "source_id" in catalog else pd.Series([None] * len(catalog), index=catalog.index)
+    by_sid = {str(s): t for s, t in zip(sids, stored) if s is not None and pd.notna(s)}
+    return by_id, by_sid
+
+
+def _lookup(table_id: dict, table_sid: dict, pid: Any, sid: Any) -> Any:
+    found = table_id.get(pid)
+    if (found is None or pd.isna(found)) and sid is not None and pd.notna(sid):
+        found = table_sid.get(str(sid))
+    return None if found is None or pd.isna(found) else found
+
+
+def drop_stale(new: pd.DataFrame, catalog: pd.DataFrame,
+               tombstones: dict | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """Skip webhook rows older than the stored version (the platform's updated_at is inside the signed body), and rows
+    for a deleted product unless they are newer than its deletion: a replayed or late delivery cannot restore an old
+    price, stock state or a deleted product. A row without a time keeps the stored time."""
+    if new.empty or "source_updated_at" not in new:
+        return new, []
+    by_id, by_sid = _stored_times(catalog)
+    dead = {k: pd.Timestamp(v) for k, v in (tombstones or {}).items()}
+    new, stale = new.copy(), []
     for i, row in new.iterrows():
-        before = by_id.get(row["product_id"])
-        if before is None or pd.isna(before):
-            before = by_sid.get(str(row.get("source_id")))
-        if before is not None and pd.notna(before) and pd.notna(row["source_updated_at"])                 and row["source_updated_at"] <= before:
+        before = _lookup(by_id, by_sid, row["product_id"], row.get("source_id"))
+        deleted = dead.get(str(row["product_id"])) or (dead.get(str(row["source_id"]))
+                                                       if pd.notna(row.get("source_id")) else None)
+        when = row["source_updated_at"]
+        if pd.isna(when):
+            if deleted is not None:
+                stale.append(row["product_id"])
+            elif before is not None:
+                new.at[i, "source_updated_at"] = before
+        elif (before is not None and when < before) or (deleted is not None and when <= deleted):
             stale.append(row["product_id"])
     return new[~new["product_id"].isin(stale)], stale
+
+
+def keep_newer_rows(fresh: pd.DataFrame, previous: pd.DataFrame) -> pd.DataFrame:
+    """A full refresh (possibly a cached snapshot) never replaces a product a newer webhook already updated."""
+    if "source_updated_at" not in fresh or "source_updated_at" not in previous or previous.empty:
+        return fresh
+    old = previous.drop_duplicates("product_id").set_index("product_id")
+    old_t = pd.to_datetime(old["source_updated_at"], errors="coerce", utc=True)
+    rows = []
+    for _, row in fresh.iterrows():
+        pid = row["product_id"]
+        if pid in old.index and pd.notna(old_t.get(pid)) and pd.notna(row["source_updated_at"]) \
+                and old_t[pid] > row["source_updated_at"]:
+            rows.append(old.loc[pid].to_dict() | {"product_id": pid})
+        else:
+            rows.append(row.to_dict())
+    return pd.DataFrame(rows, columns=fresh.columns)
+
+
+def _tombstones(out: Path) -> dict:
+    path = out / "tombstones.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        data = {}
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=TOMBSTONE_DAYS)
+    return {k: v for k, v in data.items() if pd.Timestamp(v) > cutoff}
 
 
 def keep_known_fields(new: pd.DataFrame, catalog: pd.DataFrame, same_source: bool) -> pd.DataFrame:
@@ -469,14 +530,36 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
         own = log.get("preset", "generic")
         gone = {str(i) for i in delete_ids}
         new = catalog.iloc[:0]
+        log["stale"] = []
+        tombstones = _tombstones(out)
+        by_id, by_sid = _stored_times(catalog)
+        now = pd.Timestamp.now(tz="UTC")
         if feed is not None and not feed.empty:
             fmt = preset or own                            # a saved mapping belongs to the store's own files only
             new, _ = import_feed(feed, fmt, (log.get("mapping") or None) if preset is None else None)
-            raw_ids = {str(_clean_id(v)) for c in ("id", "ID", "handle", "Handle", "SKU", "product_id")
-                       if c in feed for v in feed[c] if _clean_id(v) is not None}
-            gone |= raw_ids - set(new["product_id"]) - set(new["source_id"].dropna())
-            new, log["stale"] = drop_stale(new, catalog)
+            when = pd.to_datetime(feed[[c for c in ("updated_at", "date_modified_gmt") if c in feed][0]]
+                                  if {"updated_at", "date_modified_gmt"} & set(feed) else pd.Series(
+                                      [None] * len(feed), index=feed.index), errors="coerce", utc=True)
+            hidden = set()                                 # unpublished in this (signed, timed) message
+            for c in ("id", "ID", "handle", "Handle", "SKU", "product_id"):
+                if c not in feed:
+                    continue
+                for v, t in zip(feed[c], when):
+                    key = _clean_id(v)
+                    if key is None or str(key) in set(new["product_id"]) | set(new["source_id"].dropna()):
+                        continue
+                    stored = _lookup(by_id, by_sid, str(key), str(key))
+                    if stored is not None and pd.notna(t) and t < stored:
+                        continue                           # an older "unpublish" never removes a newer product
+                    hidden.add(str(key))
+                    tombstones[str(key)] = str(max(x for x in (t, stored, now) if x is not None and pd.notna(x)))
+            gone |= hidden
+            new, log["stale"] = drop_stale(new, catalog, tombstones)
             new = keep_known_fields(new, catalog, same_source=fmt == own)
+            for _, row in new.iterrows():                  # back after a deletion (newer than it): forget it
+                tombstones.pop(str(row["product_id"]), None)
+                if pd.notna(row.get("source_id")):
+                    tombstones.pop(str(row["source_id"]), None)
         pid, sid = catalog["product_id"].astype(str), catalog["source_id"].astype(str)
         new_ids, new_sids = set(new["product_id"]), set(new["source_id"].dropna().astype(str))
         drop = pid.isin(gone | new_ids) | sid.isin(gone | new_sids)      # also a product renamed (same platform id)
@@ -496,6 +579,15 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
                 log["not_found"] = unmatched
         elif unmatched:
             log["not_found"] = unmatched                  # e.g. a CSV store without its address: re-upload later
+        for _, row in catalog[drop & ~pid.isin(new_ids)].iterrows():     # remember deletions (both ids)
+            stored = _lookup(by_id, by_sid, row["product_id"], row.get("source_id"))
+            mark = str(max(stored, now) if stored is not None else now)
+            tombstones[str(row["product_id"])] = mark
+            if pd.notna(row.get("source_id")):
+                tombstones[str(row["source_id"])] = mark
+        (out / "tombstones.json").write_text(json.dumps(tombstones), encoding="utf-8")
+        if new.empty and not drop.any():                  # nothing to change (e.g. a stale delivery): no rewrite
+            return log
         merged = pd.concat([catalog[~drop], new], ignore_index=True)
         if merged.empty:
             raise ValueError("the update would leave the store with no products")

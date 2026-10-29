@@ -585,7 +585,7 @@ def test_webhook_updates_older_than_the_stored_version_are_skipped(tmp_path, mon
     assert send("30.00", "2026-10-30T10:00:00-04:00")["applied"] == 1 and price() == 30.0
     old = send("20.00", "2026-10-30T09:00:00-04:00")                      # older: out of order or replayed
     assert old["applied"] == 0 and old["stale"] == ["steel-kettle"] and price() == 30.0
-    assert send("25.00", "2026-10-30T14:00:00Z")["stale"] == ["steel-kettle"]   # same instant, other time zone
+    assert send("25.00", "2026-10-30T13:59:59Z")["stale"] == ["steel-kettle"]   # a second earlier, other zone
     assert send("35.00", "2026-10-30T14:00:01Z")["applied"] == 1 and price() == 35.0
     woo = store.woocommerce_webhook_feed({"id": 7, "sku": "K-7", "name": "Kettle", "status": "publish",
                                           "date_modified_gmt": "2026-10-30T12:00:00"})

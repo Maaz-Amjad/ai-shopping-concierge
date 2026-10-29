@@ -110,7 +110,7 @@ def rank(cands: pd.DataFrame, user_vec: np.ndarray | None, w: Weights, *, catalo
     out = pd.DataFrame({
         "row": rows,
         "product_id": catalog["product_id"].to_numpy()[rows],
-        "cosine": cands["score"].to_numpy(dtype=np.float64),
+        "cosine": (cands["cosine"] if "cosine" in cands else cands["score"]).to_numpy(dtype=np.float64),
         "s_sem": minmax(cands["score"].to_numpy()),
         "s_pers": minmax(embeddings[rows] @ user_vec) if user_vec is not None else np.zeros(len(rows)),
         "s_pop": popularity_score(popularity[rows], popularity.max()),
