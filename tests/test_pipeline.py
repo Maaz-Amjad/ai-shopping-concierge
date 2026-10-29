@@ -116,3 +116,13 @@ def test_result_to_dict_is_json_ready_with_scores_and_reasons(tmp_path):
     assert [p["product_id"] for p in d["products"]] == ["A", "B"]
     assert d["products"][0]["reason"] == "fits" and {"s_sem", "s_pers", "s_pop", "final"} <= set(d["products"][0])
     assert d["parsed"]["category"] == "Ice Makers" and d["flags"]["cold_start"] is True
+
+
+def test_search_products_applies_not_x_exclusions(tmp_path):
+    # 29 Oct: the app shows "not ..." as an understood limit, so the tool path must enforce it (spec 8.3, S5x).
+    from src.pipeline import search_products
+
+    parsed = json.dumps({"semantic_query": "ice maker", "exclude_terms": ["maker b"]})
+    res = resources(tmp_path, [parsed, gen(["A", "C"])])
+    out = search_products("ice maker, not maker b", res)
+    assert "B" not in out.ranked["product_id"].tolist()
