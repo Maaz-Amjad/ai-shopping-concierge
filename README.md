@@ -29,6 +29,7 @@ Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be 
 | 8 Grounded answers: `src/generate.py`, `src/pipeline.py` | done: grounding validator + one regeneration + template fallback; 22/22 answers grounded (21 first try) |
 | 9 Test-set evaluation: [04_evaluation](notebooks/04_evaluation.ipynb) | done |
 | 10 [Final report](docs/final_report.md) | done |
+| 11 Demo app, store connector (API + widget), MCP server: `app/`, `src/store.py` | done |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -63,6 +64,45 @@ with 95% bootstrap confidence intervals.
   -0.026 NDCG@10 [-0.044, -0.007] while precision@10 is unchanged: it ranks some relevant products lower.
 - Grounding: 22/22 answers grounded, 0 invented product IDs. Retrieval p95 11 ms; LLM generation p95 12.7 s (6 s
   end-to-end target not met on the free tier).
+
+## Try it: demo app, store connector, MCP server
+
+After setup (below), three ways to use the concierge, all read-only and built on the same `src/pipeline.py`:
+
+**Demo app (Streamlit).** Type a request, pick a new or returning shopper, and see the enforced limits, the ranked
+products with their score components, similar products, and the grounded answer.
+
+```bash
+.venv/Scripts/python.exe -m streamlit run app/streamlit_app.py
+```
+
+**Plug into an existing store.** Import the store's product export (CSV or JSON, a file or a URL), start the API, and
+paste two lines into any page:
+
+```bash
+.venv/Scripts/python.exe -m src.store --name mystore --file products_export.csv --preset shopify
+.venv/Scripts/python.exe -m src.store --name mystore --file https://mystore.com/products.json --preset shopify_json
+.venv/Scripts/python.exe -m src.store --name mystore --file feed.csv --map title=Name,price=Cost   # any other format
+.venv/Scripts/python.exe -m uvicorn app.api:app --port 8000      # docs at http://localhost:8000/docs
+```
+
+```html
+<div id="concierge-widget"></div>
+<script src="http://localhost:8000/widget.js" data-store="mystore"></script>
+```
+
+Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
+(`product_id,title,brand,category,price,description,features`). API: `POST /search`, `GET /similar/{id}`,
+`GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in
+`stores/` (not committed); their shoppers have no history, so personalization is off for them.
+
+**MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). For Claude Desktop or
+Claude Code, add:
+
+```json
+{"mcpServers": {"shopping-concierge": {"command": "<project>/.venv/Scripts/python.exe",
+  "args": ["-m", "app.mcp_server"], "cwd": "<project>", "env": {"CONCIERGE_STORE": "mystore"}}}}
+```
 
 ## Setup
 
@@ -99,7 +139,8 @@ curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/A
 ```
 docs/        requirements, technical specification, approved proposal
 intent/      intent.md (playbook Stage 1)
-src/         pipeline modules (llm.py = cached, rate-limited Gemini client)
+src/         pipeline modules (llm.py = cached, rate-limited Gemini client; store.py = feed importer)
+app/         Streamlit demo, REST API + drop-in widget, MCP server
 tests/       pytest suite (never calls the real API)
 notebooks/   EDA, baselines, pipeline demo, evaluation
 eval/        benchmark queries, relevance labels, results

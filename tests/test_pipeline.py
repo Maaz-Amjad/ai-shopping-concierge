@@ -83,3 +83,36 @@ def test_five_queries_end_to_end(tmp_path):
     assert "Price not listed (cannot confirm they fit your budget):\n- hood c by GE" in outs[3].answer.text
     assert outs[4].flags["parser_fallback"] and outs[4].parsed_query.semantic_query == "q"
     assert all(o.answer.text for o in outs)
+
+
+def test_search_products_explicit_filters_override_and_invalid_ones_dropped(tmp_path):
+    from src.pipeline import search_products
+
+    parsed = json.dumps({"semantic_query": "ice maker", "max_price": 500})
+    res = resources(tmp_path, [parsed, gen(["A"], "One GE ice maker.")])
+    out = search_products("ice maker under $500", res, max_price=110, brand="Samsung")
+    assert out.parsed_query.max_price == 110 and out.parsed_query.brand is None   # explicit wins; unknown brand dropped
+    assert out.ranked["product_id"].tolist() == ["A"]
+    assert "explicit filter: max_price=110" in out.flags["parse_log"]
+    assert any("brand" in line and "Samsung" in line for line in out.flags["parse_log"])
+
+
+def test_get_similar_excludes_itself_and_rejects_unknown_ids(tmp_path):
+    from src.pipeline import get_similar
+
+    res = resources(tmp_path, [])
+    sim = get_similar("A", res, n=2)
+    assert sim["product_id"].tolist() == ["B", "C"] and sim["similarity"].tolist() == [0.8, 0.0]
+    with pytest.raises(KeyError):
+        get_similar("nope", res)
+
+
+def test_result_to_dict_is_json_ready_with_scores_and_reasons(tmp_path):
+    from src.pipeline import result_to_dict
+
+    res = resources(tmp_path, [gen(["A", "B"])])
+    out = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"))
+    d = json.loads(json.dumps(result_to_dict("ice maker", out, res)))      # round-trips through JSON
+    assert [p["product_id"] for p in d["products"]] == ["A", "B"]
+    assert d["products"][0]["reason"] == "fits" and {"s_sem", "s_pers", "s_pop", "final"} <= set(d["products"][0])
+    assert d["parsed"]["category"] == "Ice Makers" and d["flags"]["cold_start"] is True

@@ -13,7 +13,7 @@ from src import ROOT, load_config, set_seed
 from src.filters import relaxation_suggestions
 from src.generate import MAX_WORDS, GenerationResult, answer_text, generate_answer, unpriced_section
 from src.llm import LLMClient
-from src.parse import CatalogMeta, ParsedQuery, parse_query
+from src.parse import CatalogMeta, ParsedQuery, parse_query, validate
 from src.personalize import Weights, build_profiles, rank
 from src.retrieve import DenseIndex, retrieve
 
@@ -33,14 +33,22 @@ class Resources:
     brands: list[str]
 
 
-def load_resources(cfg: dict | None = None, max_calls: int | None = None) -> Resources:
+def load_resources(cfg: dict | None = None, max_calls: int | None = None, store: str | None = None) -> Resources:
+    """Load the benchmark catalog, or an imported store (`python -m src.store`) whose users are all cold-start."""
     from src.data import load_catalog, load_interactions
     from src.embed import load_embeddings, load_model
 
     cfg = cfg or load_config()
     set_seed(cfg["seed"])
-    catalog = load_catalog()
-    embeddings, product_ids = load_embeddings()
+    if store:
+        from src.store import STORES_DIR
+
+        store_dir = STORES_DIR / store
+        catalog = pd.read_pickle(store_dir / "catalog.pkl")
+        embeddings, product_ids = load_embeddings(store_dir)
+    else:
+        catalog = load_catalog()
+        embeddings, product_ids = load_embeddings()
     if not (product_ids == catalog["product_id"].to_numpy()).all():
         raise ValueError("embeddings are not aligned with the catalog; rebuild with python -m src.embed")
     llm = cfg["llm"]
@@ -48,9 +56,9 @@ def load_resources(cfg: dict | None = None, max_calls: int | None = None) -> Res
                        temperature=llm["temperature"], max_output_tokens=llm["max_output_tokens"],
                        max_calls=max_calls)
     brands = sorted(catalog["brand"].dropna().astype(str).unique().tolist())
+    profiles = {} if store else build_profiles(load_interactions(), catalog, embeddings)
     return Resources(cfg, catalog, embeddings, DenseIndex(embeddings), load_model(cfg["embedding"]["model"]),
-                     CatalogMeta.from_catalog(catalog), build_profiles(load_interactions(), catalog, embeddings),
-                     client, brands)
+                     CatalogMeta.from_catalog(catalog), profiles, client, brands)
 
 
 @dataclass
@@ -106,6 +114,65 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     timings["total"] = sum(timings.values())
     flags.update(generation_fallback=answer.fallback, grounding_errors=answer.errors)
     return PipelineResult(parsed, result.candidates, ranked, answer, timings, flags)
+
+
+PRODUCT_FIELDS = ["product_id", "title", "brand", "category", "price"]
+SCORE_FIELDS = ["rank", "final", "s_sem", "s_pers", "s_pop", "cosine"]
+
+
+def search_products(query: str, res: Resources, *, max_price: float | None = None, min_price: float | None = None,
+                    category: str | None = None, brand: str | None = None, n: int | None = None,
+                    user_id: str | None = None) -> PipelineResult:
+    """Tool interface (spec 11): the LLM parses the query; filters passed explicitly (a store's UI or an AI agent)
+    override the parsed ones and are validated like parser output (unknown category/brand dropped and logged)."""
+    explicit = {k: v for k, v in {"max_price": max_price, "min_price": min_price, "category": category,
+                                  "brand": brand}.items() if v is not None}
+    if not explicit:
+        return respond(query, res, user_id=user_id, n=n)
+    pr = parse_query(query, res.meta, res.client, raise_on_quota=False)
+    parsed, log = validate(pr.parsed.model_copy(update=explicit), query, res.meta)
+    out = respond(query, res, user_id=user_id, n=n, parsed=parsed)
+    out.flags.update(parse_log=pr.log + [f"explicit filter: {k}={v}" for k, v in explicit.items()] + log,
+                     parser_fallback=pr.fallback)
+    return out
+
+
+def get_similar(product_id: str, res: Resources, n: int = 5) -> pd.DataFrame:
+    """Products closest to `product_id` by embedding cosine (spec 11 get_similar); raises KeyError if unknown."""
+    rows = np.flatnonzero(res.catalog["product_id"].to_numpy() == product_id)
+    if len(rows) == 0:
+        raise KeyError(f"unknown product_id {product_id}")
+    scores = res.embeddings @ res.embeddings[rows[0]]
+    scores[rows[0]] = -np.inf
+    top = np.argsort(-scores, kind="stable")[:n]
+    out = res.catalog.iloc[top][PRODUCT_FIELDS].reset_index(drop=True)
+    return out.assign(similarity=scores[top].astype(float).round(4))
+
+
+def _plain(value: Any) -> Any:
+    """JSON-safe scalars: numpy numbers to Python, NaN to None."""
+    if isinstance(value, (np.generic,)):
+        value = value.item()
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    return value
+
+
+def records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    return [{k: _plain(v) for k, v in row.items()} for row in df.to_dict("records")]
+
+
+def result_to_dict(query: str, out: PipelineResult, res: Resources) -> dict[str, Any]:
+    """JSON view of a pipeline result: parsed filters, products with score components (NFR-7), answer, flags."""
+    products = res.catalog.iloc[out.ranked["row"].to_numpy()][PRODUCT_FIELDS].reset_index(drop=True)
+    scores = out.ranked[[c for c in SCORE_FIELDS if c in out.ranked]].reset_index(drop=True)
+    reasons = {r.product_id: r.reason for r in out.answer.answer.recommendations} if out.answer.answer else {}
+    items = records(pd.concat([products, scores], axis=1))
+    for item in items:
+        item["reason"] = reasons.get(item["product_id"])
+    flags = {k: (v if isinstance(v, (list, str, bool, type(None))) else _plain(v)) for k, v in out.flags.items()}
+    return {"query": query, "parsed": out.parsed_query.model_dump(), "products": items, "answer": out.answer.text,
+            "flags": flags, "timings_ms": {k: round(v, 1) for k, v in out.timings_ms.items()}}
 
 
 def word_count(text: str) -> int:
