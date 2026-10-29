@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # the embedding model is downloaded once at build time, not on every start
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
+# use only that copy at run time: no network check on start (a slow Hub delayed the first request by ~100 s)
+ENV HF_HUB_OFFLINE=1
 
 COPY config.yaml .
 COPY src/ src/
