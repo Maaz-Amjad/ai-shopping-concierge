@@ -2,9 +2,9 @@
 
 Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | October 2026
 
-> **Status (28 Oct):** every number below comes from `eval/results/`. Numbers marked *provisional* depend on the
-> personalized system S6, 11 % of whose top-10 items are not yet labelled (judge API overloaded); they are scored on
-> judged items only and will be refreshed once those items are graded.
+> **Status (29 Oct):** results numbers come from `eval/results/` (API call counts from the call log). Of the items the
+> personalized system S6 adds to its test top 10, 0.6 % (5 pairs on one query) could not be judged within the free-tier
+> quota; they count as not relevant.
 
 ## 1. Summary
 
@@ -19,15 +19,16 @@ On 15 held-out test queries (never used for tuning):
 | Goal | Target | Result |
 |---|---|---|
 | G1 query understanding | parse F1 ≥ 0.85 | **0.94** (precision 0.88, recall 1.00) |
-| G2 semantic retrieval | dense vs TF-IDF on NDCG@10, with CIs | **0.66 vs 0.41**; paired difference +0.25 [0.05, 0.47] |
-| G3 constraint enforcement | adherence ≥ 95 % | **100 %** for the filtered systems (vs 43–63 % without filters) |
-| G4 personalization | no material relevance loss; beat popularity on next-item HitRate@10 | next item: **6.3 % vs 2.8 %** (CIs do not overlap); relevance: small loss, **−0.025** NDCG@10 [−0.052, −0.004] on judged items (*provisional*) |
+| G2 semantic retrieval | dense vs TF-IDF on NDCG@10, with CIs | **0.65 vs 0.40**; paired difference +0.25 [0.05, 0.48] |
+| G3 constraint enforcement | adherence ≥ 95 % | **100 %** for the filtered systems (vs 43–63 % without filters; filtered systems are scored on 8 queries because the 2 no-result queries return nothing) |
+| G4 personalization | no material relevance loss; beat popularity on next-item HitRate@10 | next item: **6.3 % vs 2.8 %** (CIs do not overlap); relevance: small loss, **−0.026** NDCG@10 [−0.044, −0.007]; precision@10 unchanged (−0.006 [−0.023, 0.008]) |
 | G5 grounded answers | 0 IDs outside the retrieved set; mismatches reported | **0** outside IDs; 22/22 answers grounded (21 on the first try); 0 price or brand mismatches in accepted answers |
 | NFR-1 latency | retrieval p95 < 500 ms; end-to-end p95 < 6 s | retrieval **11 ms**; generation alone p95 **12.7 s** (target not met) |
 
-Two results are neutral or negative and are reported as such: filter-first search (the proposed refinement) returns
-exactly the same top-10 as the proposal's post-filter design on every test query, and end-to-end latency misses its
-target because of the free-tier LLM endpoint.
+Three results are neutral or negative and are reported as such: filter-first search (the proposed refinement) returns
+exactly the same top-10 as the proposal's post-filter design on every test query; personalization, while it predicts the
+next purchase better than popularity, slightly lowers ranking quality for stated queries (NDCG@10 −0.026); and
+end-to-end latency misses its target because of the free-tier LLM endpoint.
 
 ## 2. Problem
 
@@ -58,14 +59,16 @@ limits such as a price cap, and neither adapts to the shopper or explains its pi
 
 Every LLM call goes through one client (`src/llm.py`) that caches responses on disk, rate-limits, retries transient
 errors, and logs each call. Over the whole project the pipeline used 61 Flash-Lite calls and the relevance judge
-33 successful Gemini 3.8 Flash calls (plus 27 failed attempts, mostly 503 "overloaded").
+33 successful Gemini 3.8 Flash calls (plus 42 failed attempts, mostly 503 "overloaded"; counts from the call log in
+`artifacts/llm_calls.jsonl`, as of 28 Oct).
 
 ## 5. Evaluation design
 
 - **Systems:** S1 TF-IDF, S2 BM25, S3 dense, S4 dense + post-filter, S5 dense + filter-first, S5x = S5 + exclusion terms
   ("not stainless"), S6 = S5 + personalization.
 - **Relevance labels:** the union of every system's top 10 per query (659 pairs) was graded 0/1/2 by Gemini 3.8 Flash
-  (a different model from the generator). A blind, stratified 25 % sample (167 pairs) was re-graded by hand; the judge
+  (a different model from the generator). A blind, stratified 25 % sample of those (167 pairs) was re-graded by hand;
+  65 further pairs that only S6 surfaces were judged later and are judge-only (so 23 % of all 724 labels are human-checked); the judge
   agreed on the exact grade for **81.4 %** and on relevant-vs-not for **91.6 %**, and was the stricter grader. The human
   grade wins wherever both exist.
 - **Metrics:** Precision@K, pooled Recall@K, NDCG@K (K = 5, 10), constraint adherence, parse micro-F1, grounding,
@@ -80,17 +83,16 @@ errors, and logs each call. Over the whole project the pipeline used 61 Flash-Li
 
 | System | P@10 | NDCG@10 [95 % CI] | Adherence@10 |
 |---|---|---|---|
-| S1 TF-IDF | 0.46 | 0.41 [0.24, 0.59] | 0.43 |
-| S2 BM25 | 0.51 | 0.52 [0.33, 0.71] | 0.44 |
-| S3 dense | 0.67 | 0.66 [0.46, 0.83] | 0.63 |
-| S4 post-filter | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
-| S5 filter-first | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
-| S5x + exclusions | 0.81 | 0.76 [0.59, 0.91] | 1.00 |
-| S6 personalized (*provisional*) | 0.71 | 0.66 [0.52, 0.81] | 1.00 |
+| S1 TF-IDF | 0.46 | 0.40 [0.24, 0.58] | 0.43 |
+| S2 BM25 | 0.51 | 0.51 [0.33, 0.70] | 0.44 |
+| S3 dense | 0.67 | 0.65 [0.45, 0.82] | 0.63 |
+| S4 post-filter | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
+| S5 filter-first | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
+| S5x + exclusions | 0.81 | 0.75 [0.59, 0.90] | 1.00 |
+| S6 personalized | 0.79 | 0.71 [0.55, 0.87] | 1.00 |
 
-Paired differences in NDCG@10: S1 → S3 **+0.25 [0.05, 0.47]**; S3 → S5 +0.09 [−0.14, 0.34]; S4 → S5 **0.00**;
-S5 → S5x +0.01 [0.00, 0.04]; S5 → S6 −0.08 [−0.13, −0.04] counting unlabelled S6 items as irrelevant (−0.025 on
-judged items only, section 6.3). With 15 queries these are indicative, not significance claims.
+Paired differences in NDCG@10: S1 → S3 **+0.25 [0.05, 0.48]**; S3 → S5 +0.09 [−0.14, 0.34]; S4 → S5 **0.00**;
+S5 → S5x +0.01 [0.00, 0.04]; S5 → S6 −0.03 [−0.04, −0.01] (section 6.3). With 15 queries these are indicative, not significance claims.
 
 - **Semantic retrieval** gives the clearest gain, and the only interval that excludes zero.
 - **Filters** guarantee the limits (adherence 1.00), and raise relevance on average, but the interval spans zero:
@@ -100,7 +102,7 @@ judged items only, section 6.3). With 15 queries these are indicative, not signi
   and its candidate pool was smaller on 11 of 15 queries (median 60 vs 200), which limits re-ranking.
 
 A post-hoc view without the two no-result queries (whose ranking metrics reward returning *something*) gives NDCG@10 of
-0.44 (S1), 0.64 (S3) and 0.80 (S5); it is secondary because it was chosen after seeing the results.
+0.43 (S1), 0.63 (S3) and 0.79 (S5); it is secondary because it was chosen after seeing the results.
 
 ### 6.2 Query understanding
 
@@ -112,16 +114,16 @@ Dev F1 went from 0.80 (first prompt) to 1.00 (final prompt) through tuning on de
 - **Experiment B (next item, 3,995 users):** HitRate@10 random 0.15 %, popularity 2.78 % [2.28, 3.28], profile 4.01 %
   [3.40, 4.66], **blend 6.31 % [5.61, 7.03]**; NDCG@10 shows the same order. Popularity is counted from earlier
   interactions only (an earlier version counted the held-out purchase too; the verifier caught it and it was fixed).
-- **Experiment A (query relevance, 8 users with 10+ interactions, test queries; *provisional*):** personalization
-  changes the results (Kendall tau 0.80 over the pool, 80 % of the top 10 kept) and costs a little relevance: on judged
-  items NDCG@10 drops by **−0.025 [−0.052, −0.004]**, and all 8 users are slightly negative (−0.010 to −0.043). The median
-  (user, query) change is 0; the loss comes from a few queries (q10 −0.14, q19 −0.08, q02 and q09 −0.06). The plain change, which
-  counts the 11 % of S6's top 10 that is still unlabelled as irrelevant, is −0.09. The spec expected a small or neutral
-  effect: it is small but consistently negative. Dev queries had suggested about +0.01, so 10 dev queries were a weak
-  guide here. Combined with experiment B, personalization helps predict what a user buys next but does not help a user
+- **Experiment A (query relevance, 8 users with 10+ interactions, test queries):** personalization changes the
+  results (Kendall tau 0.80 over the pool, 80 % of the top 10 kept) and costs a little relevance: NDCG@10 drops by
+  **−0.026 [−0.044, −0.007]** (averaged over users, then queries; −0.026 [−0.043, −0.009] in the paired table), and all 8
+  users are slightly negative (−0.014 to −0.038). Of 104 (user, query) pairs, 48 lose, 43 are unchanged and 13 gain;
+  the largest losses are q10 and q19 (−0.08) and q02 (−0.06). Precision@10 barely moves (−0.006 [−0.023, 0.008]), so S6
+  keeps the relevant products but ranks some of them lower. The spec expected a small or neutral effect: it is small
+  and negative. On dev the same weights gave +0.02, so 10 dev queries were a weak guide here. Combined with experiment B, personalization helps predict what a user buys next but does not help a user
   who has stated what they want.
-- **Weight sensitivity (dev, judged items only):** across w_pers 0–0.5 and w_pop 0–0.1 the change in NDCG@10 stays within
-  ±0.012, so on labelled items personalization barely affects relevance; what grows with w_pers is the rank shift.
+- **Weight sensitivity (dev, judged items only):** across w_pers 0–0.5 and w_pop 0–0.1 the change in NDCG@10 stays between
+  0.00 and +0.04 (+0.019 at the spec weights); what grows with w_pers is the rank shift (Kendall tau 0.76 → 0.43).
 
 ### 6.4 Grounded answers
 
@@ -143,23 +145,26 @@ is met by a wide margin; the 6 s end-to-end target is not.
 
 ## 7. Error analysis (test queries)
 
-Failures were tagged by deterministic rules (spec taxonomy) and checked by reading the examples:
+Failures were tagged by deterministic rules (the spec taxonomy, with *catalog gap* widened to "fewer than 10 products
+satisfy the parsed limits" besides missing prices; see section 9) and checked by reading the examples:
 
 - **Parse error → over-filtering (q09, "Frigidaire brand ice maker assembly").** The parser added the category
   *Ice Makers*, but the wanted parts are filed under *Refrigerator Parts & Accessories*; the filter removed them and
   NDCG@10 fell from 0.95 (S3, no filters) to 0.22. This is the main risk of LLM-parsed filters: a plausible but unstated
   limit silently removes the right products.
 - **Harmless parse error (q15).** The same kind of added category, but it matched the products the user wanted.
+- **Borderline semantic retrieval failure (q17, "replacement wick filter for my bedroom humidifier").** Dense search
+  reaches NDCG@10 0.48, just under the 0.5 failure threshold (0.503 before the S6 items joined the pool), so this tag
+  depends on the threshold and should be read as borderline.
 - **Catalog gap (q24, q25).** No Bosch countertop dishwasher and no LG freezer under $50 exist; the system correctly
   returns nothing and suggests a limit to relax.
 - **Label conflicts.** On q24, five full-size Bosch dishwashers were graded 1 by the judge and by hand although they
   break the stated *countertop* limit, so S5 scores 0 for correctly returning nothing. Nine such conflicts exist across
   the test queries; they are reported rather than relabelled.
-- **Personalization drift (*provisional*).** The rule (S6 NDCG@10 more than 0.1 below S5) tags five queries, but it
-  counts unlabelled items as irrelevant; on judged items only, one query crosses it: q10, "beverage refrigerator for cans
-  and wine" (−0.14).
-- **Semantic retrieval failures and grounding failures:** none on the test queries (the one grounding rejection was a
-  dev query, fixed by regeneration).
+- **Personalization drift:** none. No query has S6 more than 0.1 below S5; the largest averaged loss is q10 (−0.08).
+  Before the S6 items were labelled, this rule tagged five queries, all because unlabelled items counted as 0.
+- **Grounding failures:** none on the test queries (the one grounding rejection was a dev query, fixed by
+  regeneration).
 
 ## 8. Limitations
 
@@ -179,7 +184,9 @@ Failures were tagged by deterministic rules (spec taxonomy) and checked by readi
 All were recorded during the build: 10,000 products (the low end of the spec range); 25 queries (the spec minimum);
 local CPU instead of Colab; a separate "price not listed" list for unpriced matches; S5x reported separately from S5;
 judged-only metrics for unpooled comparisons; S6 items judged in separate batches; the validator's brand rule extended to
-compatibility wording and user-named brands; rendered titles shortened to 10 words; Streamlit and MCP wrapper cut
+compatibility wording and user-named brands; the error-analysis tag *catalog gap* also covers "fewer than 10 products
+satisfy the parsed limits" (no missing-description check, because cleaning already drops near-empty listings); rendered titles shortened to 10
+words; Streamlit and MCP wrapper cut
 (pre-agreed cut list).
 
 ## 10. Reproducibility
@@ -187,10 +194,11 @@ compatibility wording and user-named brands; rendered titles shortened to 10 wor
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 146 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 147 unit and integration tests run offline with a fake client.
 
 ## 11. Future work
 
 Feed the error analysis back into the parser (penalize categories the user did not state); evaluate on a larger,
 multi-annotator benchmark; reduce generation latency (paid tier, shorter output, streaming); move masked search to a
-vector database with metadata filtering for larger catalogs; and test personalization online.
+vector database with metadata filtering for larger catalogs; test personalization online; and give the personal score a smaller weight, or apply it only to
+break near-ties, when the query states clear intent.

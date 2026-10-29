@@ -27,8 +27,8 @@ Work in progress; deadline 29 Oct 2026. Design decisions and deviations will be 
 | 6 Relevance labels: LLM judge + manual check | done: 659 pooled pairs judged (Gemini 3.8 Flash); 167 (25%) human-verified, agreement 81% exact / 92% relevant-vs-not |
 | 7 Personalization: `src/personalize.py` | done: user profiles, weighted re-ranking, cold start; next-item test (3,995 users) HitRate@10 blend 0.063 vs popularity 0.028 vs random 0.002 |
 | 8 Grounded answers: `src/generate.py`, `src/pipeline.py` | done: grounding validator + one regeneration + template fallback; 22/22 answers grounded (21 first try) |
-| 9 Test-set evaluation: [04_evaluation](notebooks/04_evaluation.ipynb) | done (S6 provisional: 11% of its top 10 not yet labelled) |
-| 10 [Final report](docs/final_report.md) | draft complete; S6 numbers refreshed once labelling finishes |
+| 9 Test-set evaluation: [04_evaluation](notebooks/04_evaluation.ipynb) | done |
+| 10 [Final report](docs/final_report.md) | done |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -49,18 +49,18 @@ with 95% bootstrap confidence intervals.
 
 | System | P@10 | NDCG@10 [95% CI] | Constraint adherence@10 |
 |---|---|---|---|
-| S1 TF-IDF | 0.46 | 0.41 [0.24, 0.59] | 0.43 |
-| S2 BM25 | 0.51 | 0.52 [0.33, 0.71] | 0.44 |
-| S3 dense | 0.67 | 0.66 [0.46, 0.83] | 0.63 |
-| S4 post-filter | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
-| S5 filter-first | 0.79 | 0.75 [0.59, 0.89] | 1.00 |
-| S5x + exclusions | 0.81 | 0.76 [0.59, 0.91] | 1.00 |
-| S6 personalized (provisional) | 0.71 | 0.66 [0.52, 0.81] | 1.00 |
+| S1 TF-IDF | 0.46 | 0.40 [0.24, 0.58] | 0.43 |
+| S2 BM25 | 0.51 | 0.51 [0.33, 0.70] | 0.44 |
+| S3 dense | 0.67 | 0.65 [0.45, 0.82] | 0.63 |
+| S4 post-filter | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
+| S5 filter-first | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
+| S5x + exclusions | 0.81 | 0.75 [0.59, 0.90] | 1.00 |
+| S6 personalized | 0.79 | 0.71 [0.55, 0.87] | 1.00 |
 
-- Query parsing F1 0.94 on test (target 0.85). Dense vs TF-IDF: +0.25 NDCG@10 [0.05, 0.47].
+- Query parsing F1 0.94 on test (target 0.85). Dense vs TF-IDF: +0.25 NDCG@10 [0.05, 0.48].
 - Filter-first and post-filter return the same top 10 on every test query (a neutral result); filter-first is cheaper.
 - Personalization: next-item HitRate@10 6.3% (blend) vs 2.8% (popularity); on query relevance it costs
-  -0.025 NDCG@10 [-0.052, -0.004] on judged items (S6's row above counts its unlabelled items as irrelevant).
+  -0.026 NDCG@10 [-0.044, -0.007] while precision@10 is unchanged: it ranks some relevant products lower.
 - Grounding: 22/22 answers grounded, 0 invented product IDs. Retrieval p95 11 ms; LLM generation p95 12.7 s (6 s
   end-to-end target not met on the free tier).
 
@@ -89,6 +89,9 @@ curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/A
 .venv/Scripts/python.exe -m src.evaluate qrels       # merge with human labels -> eval/qrels.csv
 .venv/Scripts/python.exe -m src.personalize          # next-item experiment, no LLM -> eval/results/exp_b_*.csv
 .venv/Scripts/python.exe -m src.pipeline             # grounded answers for all queries -> eval/results/generation.csv
+.venv/Scripts/python.exe -m src.evaluate judge-s6    # personalized runs + judge their new items -> eval/results/runs_s6.csv
+.venv/Scripts/python.exe -m src.evaluate qrels       # merge judge + human labels -> eval/qrels.csv
+.venv/Scripts/python.exe -m src.evaluate report --split test  # all test tables -> eval/results/test_*.csv
 ```
 
 ## Repository layout
