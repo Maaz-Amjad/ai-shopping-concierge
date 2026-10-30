@@ -2,8 +2,9 @@
 
 Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | October 2026
 
-> **Status (29 Oct, final):** results numbers come from `eval/results/` (API call counts from the call log). Every
-> product in every reported top 10, including the personalized system's, has a relevance label.
+> **Status (30 Oct, final):** every number comes from `eval/results/` (API call counts from the call log). Every
+> product in every reported top 10 has a relevance label: sections 6–7 use the main labels (23 % human-checked); the
+> production extensions in section 12 add 33 LLM-only labels in a separate file (section 12.9).
 
 ## 1. Summary
 
@@ -28,6 +29,25 @@ Three results are neutral or negative and are reported as such: filter-first sea
 exactly the same top-10 as the proposal's post-filter design on every test query; personalization, while it predicts the
 next purchase better than popularity, slightly lowers ranking quality for stated queries (NDCG@10 −0.026); and
 end-to-end latency misses its target because of the free-tier LLM endpoint.
+
+**From benchmark to store-ready prototype (sections 11–12).** After the evaluation the system was packaged as a demo
+app, a REST API with a drop-in chat widget, an MCP server, a store importer (Shopify, WooCommerce, any CSV/JSON) and a
+chat agent, and then extended toward production one change at a time, each chosen on dev and reported once on test:
+
+| Extension | Result on test | In the app |
+|---|---|---|
+| Star ratings as a ranking term (12.1) | neutral: −0.009 [−0.032, +0.008] NDCG@10 for new shoppers | on (quality signal the labels cannot reward) |
+| Stock awareness and store refresh (12.2) | out-of-stock products never recommended; only changed products re-embedded | on |
+| Smaller personal weight for specific requests (12.3) | dev chose no change; test disagreed | off |
+| API hardening and signed store webhooks (12.4) | rate limits, API keys, replay and ordering guard; checked live | on |
+| Hybrid keyword + semantic retrieval (12.5, 12.9) | **+0.037** [−0.017, +0.104] (indicative); part-number query 0.60 → 1.00 | on |
+| Products before the written answer (12.6) | answers still validated before they are shown | on |
+| Parser rule for unstated categories (12.7) | reverted: dropped most real category requests | — |
+| Shopper events feed popularity (12.8) | privacy-limited events; owner summary for a dashboard | on |
+| Cross-encoder re-ranker (12.10) | −0.012 [−0.038, +0.010]; 13–17 s per query on CPU | off |
+
+Again, several of these are neutral or negative and are reported as such; none of them changes the tables in sections
+6–7, which keep the evaluated configuration.
 
 ## 2. Problem
 
@@ -57,9 +77,9 @@ limits such as a price cap, and neither adapts to the shopper or explains its pi
 | No result | `src/filters.py` | Counts how many products remain if each limit is dropped and suggests the best one; no LLM |
 
 Every LLM call goes through one client (`src/llm.py`) that caches responses on disk, rate-limits, retries transient
-errors, and logs each call. Over the whole project the pipeline used 61 Flash-Lite calls and the relevance judge
-33 successful Gemini 3.8 Flash calls (plus 42 failed attempts, mostly 503 "overloaded"; counts from the call log in
-`artifacts/llm_calls.jsonl`, as of 28 Oct).
+errors, and logs each call. Over the whole project (benchmark, chat evaluation and smoke tests) there were 163
+successful Gemini 3.5 Flash-Lite calls (20 failed) and 61 successful Gemini 3.8 Flash judge calls (57 failed attempts,
+mostly 503 "overloaded" or timeouts; counts from the call log in `artifacts/llm_calls.jsonl`, 30 Oct).
 
 ## 5. Evaluation design
 
@@ -177,6 +197,11 @@ satisfy the parsed limits" besides missing prices; see section 9) and checked by
   only `$` amounts are checked, and any number in the query counts as a stated price.
 - **Free-tier API.** 20 judge requests per day (failed requests count) and 503 overloads shaped the schedule; latency
   numbers reflect that endpoint.
+- **Production extensions.** Their test results rest on the same 15 queries, and the 33 extra labels of section 12.9
+  are LLM-only. The API keeps rate limits, duplicate-delivery memory and the store lock per process, and stores are
+  files on one disk, so running several server copies needs a shared store (Redis, a database). The Dockerfile was
+  written but not built on the development machine. WooCommerce delete webhooks carry no time, so a late delete can
+  remove a restored product until the next refresh. Everything runs on CPU, which rules out the cross-encoder.
 
 ## 9. Departures from the specification
 
@@ -186,15 +211,18 @@ judged-only metrics for unpooled comparisons; S6 items judged in separate batche
 compatibility wording and user-named brands; the error-analysis tag *catalog gap* also covers "fewer than 10 products
 satisfy the parsed limits" (no missing-description check, because cleaning already drops near-empty listings); rendered titles shortened to 10
 words; Streamlit and MCP wrapper first cut (pre-agreed cut list), then built after the evaluation was complete, together
-with a store connector, a chat assistant and other LLM providers (section 11, approved additions); a fourth,
-rating term in the production ranking only (section 12).
+with a store connector, a chat assistant and other LLM providers (section 11, approved additions); the production
+extensions of section 12 (approved 29–30 Oct), which use separate settings (`app.ranking`, `app.retrieval`) so the
+evaluated configuration is unchanged, and whose extra relevance labels are kept apart from the main labels.
 
 ## 10. Reproducibility
 
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 305 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero); the section 12 results by `python -m src.evaluate
+rating|adaptive|hybrid|rerank --split dev|test` (add `--completed` for section 12.9) and the chat evaluation by
+`python -m src.agent --limit 0`. 305 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -454,7 +482,17 @@ tuned on shopping data, and a larger benchmark, would be needed to revisit this.
 
 ## 13. Future work
 
-Feed the error analysis back into the parser (penalize categories the user did not state); evaluate on a larger,
-multi-annotator benchmark; reduce generation latency (paid tier, shorter output, streaming); move masked search to a
-vector database with metadata filtering for larger catalogs; test personalization online; and give the personal score a smaller weight, or apply it only to
-break near-ties, when the query states clear intent.
+- **Evaluation.** A larger, category-diverse, multi-annotator benchmark: most open questions (the personal weight for
+  specific requests, the rating weight, hybrid and re-ranker gains, the parser's unstated categories) failed to resolve
+  because 10 dev and 15 test queries give wide intervals. Then an online A/B test with a holdout group, since
+  ratings, popularity from shopper events and personalization target quality and satisfaction, which relevance
+  labels cannot measure.
+- **Parser.** Recognise stated categories with synonyms and partial names (fridge → Refrigerators), inside the parser
+  prompt, evaluated on that larger dev set (section 12.7).
+- **Product.** User accounts with one workspace per store; store owners bring their own LLM and webhook keys
+  (encrypted at rest, per-store call caps); a dashboard on the event data (click, save and Buy-click rates, assisted
+  revenue from order webhooks against a holdout); a web front end replacing Streamlit.
+- **Platform.** A shared database and vector index (Postgres + pgvector) instead of files and in-memory search, so
+  several server copies can run; deployment on a free tier for a demo (Hugging Face Spaces) and on an always-on VM
+  for persistent stores and webhooks; a GPU or a re-ranker tuned on shopping data; lower generation latency (paid
+  tier, shorter output).
