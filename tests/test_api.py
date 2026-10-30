@@ -207,7 +207,7 @@ def test_rate_limit_api_key_and_request_log(tmp_path, monkeypatch):
 
 def test_widget_sends_the_store_api_key_when_given(client):
     js = client.get("/widget.js").text
-    assert 'getAttribute("data-key")' in js and 'headers["X-API-Key"]' in js and js.count("headers: headers") == 2
+    assert 'getAttribute("data-key")' in js and 'headers["X-API-Key"]' in js and js.count("headers: headers") >= 2   # search, chat and events requests send it
 
 
 
@@ -375,3 +375,30 @@ def test_widget_stream_cleanup_final_event_and_fallback(client):
     assert "early.remove()" in js.split(".catch(")[1]                  # early cards removed on errors too
     assert 'last.type !== "answer" && last.type !== "turn"' in js     # a cut stream is an error
     assert "ReadableStream" in js                                     # plain endpoint when streams are missing
+
+
+
+# ---- Phase 13.8 (E): events ------------------------------------------------------------------------------
+
+def test_events_are_recorded_and_the_summary_needs_the_store_key(tmp_path, monkeypatch):
+    from src import store
+    from test_store import events_store
+
+    events_store(tmp_path, monkeypatch)
+    res = resources(tmp_path, [])
+    client = TestClient(create_app(lambda s: res))
+    body = {"store": "shop", "client_id": "abc-123", "events": [{"type": "click", "product_id": "a"},
+                                                                {"type": "buy", "product_id": "nope"}]}
+    r = client.post("/events", json=body)
+    assert r.status_code == 200 and r.json() == {"recorded": 1}
+    assert client.post("/events", json={**body, "store": "missing"}).status_code == 404
+    assert client.post("/events", json={**body, "client_id": "x" * 500}).status_code == 422
+    assert client.get("/events/summary", params={"store": "shop"}).status_code == 401
+    key = store.store_secrets("shop")["api_key"]
+    summary = client.get("/events/summary", params={"store": "shop"}, headers={"X-API-Key": key}).json()
+    assert summary["counts"]["click"] == 1
+
+
+def test_widget_reports_events_without_query_text(client):
+    js = client.get("/widget.js").text
+    assert '"/events"' in js and "client_id" in js and "keepalive" in js

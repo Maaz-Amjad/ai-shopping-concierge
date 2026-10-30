@@ -55,6 +55,12 @@ class ChatRequest(BaseModel):
     state: dict | None = None          # returned by the previous turn; validated again on the server
 
 
+class EventsRequest(BaseModel):
+    store: str | None = None
+    client_id: str = Field(..., min_length=1, max_length=64)       # random per-browser id (widget localStorage)
+    events: list[dict] = Field(default_factory=list, max_length=200)
+
+
 class ChatAction(BaseModel):
     action: str                        # save | similar | buy | remove | show_shortlist (buttons; no LLM call)
     args: dict = Field(default_factory=dict)
@@ -141,7 +147,7 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     app_cfg = cfg.get("app", {})
     if request_log is None and loader is None and app_cfg.get("request_log"):
         request_log = ROOT / app_cfg["request_log"]
-    limits = {"llm": 30, "other": 120, "webhook": 600, **(app_cfg.get("rate_limit_per_minute") or {}),
+    limits = {"llm": 30, "other": 120, "webhook": 600, "events": 300, **(app_cfg.get("rate_limit_per_minute") or {}),
               **(rate_limits or {})}
     shared: dict[str, object] = {}                         # one LLM client (call budget) per process
     need_key = app_cfg.get("require_api_key", False) if require_api_key is None else require_api_key
@@ -192,7 +198,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         """Per-client rate limit (429 + Retry-After) and one log line per request (no query text, no IP)."""
         start, path = time.perf_counter(), request.url.path
         group = None if path in OPEN_PATHS or request.method == "OPTIONS" else "webhook" \
-            if path.startswith("/webhooks/") else "llm" if path in LLM_PATHS else "other"
+            if path.startswith("/webhooks/") else "llm" if path in LLM_PATHS else \
+            "events" if path == "/events" else "other"
         forwarded = request.headers.get("x-forwarded-for", "") if trust_proxy else ""
         client = forwarded.split(",")[-1].strip() or (request.client.host if request.client else "?")   # the
         # last entry is the one the trusted proxy added; earlier ones come from the client and can be made up
@@ -387,6 +394,29 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         if log.get("not_found"):
             return {"status": "not_found"}
         return {"status": "stale" if log.get("stale") and not log.get("applied") else "updated"}
+
+    @app.post("/events")
+    def events(req: EventsRequest, x_api_key: str | None = Header(None)) -> dict:
+        """Shopper events from the widget (shown / click / save / buy). Demo catalog events are not stored."""
+        store = req.store or None
+        check_key(store, x_api_key)
+        if store is None:
+            return {"recorded": 0}
+        if not valid_store_name(store):
+            raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
+        try:
+            return {"recorded": store_mod.record_events(store, req.client_id, req.events)}
+        except ValueError:
+            raise HTTPException(404, f"unknown store {store!r}") from None
+
+    @app.get("/events/summary")
+    def events_summary(store: str, days: int = Query(30, ge=1, le=365),
+                       x_api_key: str | None = Header(None)) -> dict:
+        """For the store owner only: the store's API key is always required (stores/<name>/secrets.json)."""
+        expected = (store_mod.read_secrets(store) or {}).get("api_key")
+        if not expected or not x_api_key or not hmac.compare_digest(x_api_key.encode(), expected.encode()):
+            raise HTTPException(401, "missing or wrong API key (X-API-Key header)")
+        return store_mod.event_summary(store, days)
 
     @app.get("/widget.js")
     def widget() -> FileResponse:

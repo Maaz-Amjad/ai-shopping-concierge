@@ -673,3 +673,61 @@ def test_products_without_platform_ids_do_not_share_timestamps():
                         "source_updated_at": pd.to_datetime(["2026-10-30T11:00:00Z"], utc=True)})
     kept, stale = store.drop_stale(new, cat)
     assert stale == [] and kept["product_id"].tolist() == ["c"]
+
+
+
+# ---- Phase 13.8 (E): shopper events feed popularity -----------------------------------------------------
+
+def events_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    cfg = {"seed": 42, "embedding": {"model": "fake", "batch_size": 8}}
+    feed = pd.DataFrame({"product_id": ["a", "b", "c"], "title": ["Kettle", "Toaster", "Grinder"]})
+    store.build_store_from_feed("shop", feed, "generic", model=FakeModel(), cfg=cfg, source="upload")
+    return cfg
+
+
+def test_record_events_keeps_only_known_products_and_types(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    kept = store.record_events("shop", "client-1", [
+        {"type": "click", "product_id": "a"}, {"type": "buy", "product_id": "zzz"},
+        {"type": "hack", "product_id": "a"}, {"type": "save", "product_id": "b", "query": "secret"}] + [
+        {"type": "shown", "product_id": "c"}] * 60)
+    lines = [json.loads(x) for x in (tmp_path / "stores" / "shop" / "events.jsonl").read_text().splitlines()]
+    assert kept == len(lines) == 50                                   # at most 50 per request
+    assert {tuple(sorted(e)) for e in lines} == {("client", "product_id", "ts", "type")}   # nothing else stored
+    assert "secret" not in (tmp_path / "stores" / "shop" / "events.jsonl").read_text()
+    with pytest.raises(ValueError, match="no store"):
+        store.record_events("missing", "c", [{"type": "click", "product_id": "a"}])
+
+
+def test_event_popularity_weights_and_counts_each_browser_once_a_day(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    for client in ("x", "y"):
+        store.record_events("shop", client, [{"type": "buy", "product_id": "a"}, {"type": "click", "product_id": "a"}])
+    store.record_events("shop", "x", [{"type": "save", "product_id": "b"}] * 5)     # repeats count once
+    store.record_events("shop", "x", [{"type": "shown", "product_id": "c"}])
+    pop = store.event_popularity("shop")
+    assert pop.to_dict() == {"a": 12, "b": 3}                         # 2 x (buy 5 + click 1); one save; shown 0
+
+
+def test_update_popularity_reembeds_nothing_and_survives_refresh(tmp_path, monkeypatch):
+    cfg = events_store(tmp_path, monkeypatch)
+    store.record_events("shop", "x", [{"type": "buy", "product_id": "b"}])
+    model = CountingModel()
+    store.update_popularity("shop", model=model, cfg=cfg)
+    cat = pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl").set_index("product_id")
+    assert cat.loc["b", "popularity"] == 5 and cat.loc["a", "popularity"] == 0 and model.encoded == []
+    feed = pd.DataFrame({"product_id": ["a", "b"], "title": ["Kettle", "Toaster"]})
+    store.build_store_from_feed("shop", feed, "generic", model=model, cfg=cfg, source="upload")   # re-import
+    assert pd.read_pickle(tmp_path / "stores" / "shop" / "catalog.pkl").set_index("product_id").loc["b", "popularity"] == 5
+
+
+def test_event_summary_rates_and_top_products(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    store.record_events("shop", "x", [{"type": "shown", "product_id": p} for p in "abc"] +
+                        [{"type": "click", "product_id": "a"}, {"type": "buy", "product_id": "a"}])
+    store.record_events("shop", "y", [{"type": "shown", "product_id": "a"}, {"type": "save", "product_id": "b"}])
+    s = store.event_summary("shop")
+    assert s["counts"] == {"shown": 4, "click": 1, "save": 1, "buy": 1} and s["shoppers"] == 2
+    assert s["click_rate"] == 0.25 and s["buy_click_rate"] == 0.25
+    assert s["top_products"][0] == {"product_id": "a", "score": 6}

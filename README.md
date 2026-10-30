@@ -38,6 +38,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.037 [-0.017, +0.104] after judging the new products (+0.033 counting the last 0.8% unjudged as irrelevant); part-number query 0.60 -> 1.00; used by the app |
 | 13.6 Faster replies: products first, answer when validated | done: `/search/stream`, `/chat/stream`; the widget shows products before the summary |
 | 13.7 Category kept only when the request states it | done (post-hoc, see report 12.7): test parse F1 0.938 -> 0.968, dev unchanged |
+| 13.8 Feedback loop: shopper events feed popularity | done: `POST /events`, owner-only `GET /events/summary`; imported stores rank by what shoppers do |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
@@ -135,6 +136,13 @@ origin allow-list remain the real protection for public widgets). Every request 
 included (`docker build -t concierge .`; mount `data/`, `artifacts/`, `stores/`; it was written but not built here,
 because Docker is not installed on the development machine); put an HTTPS reverse proxy in front and set
 `app.trust_proxy: true`.
+
+**Shopper events.** The widget reports what shoppers do (`POST /events`: products shown, clicks, saves, Buy clicks;
+a random per-browser id, no query text, no IP). For an imported store, popularity becomes buy 5 + save 3 + click 1
+points (each browser counted once per product, action and day, over the last year); it is applied on every import,
+refresh and webhook update, or with `python -m src.store --name mystore --update-popularity` (nothing is re-embedded).
+`GET /events/summary?store=mystore` (always needs the store's API key) and `--events-summary` give the last 30 days:
+counts, shoppers, click, save and Buy-click rates, top products. The demo catalog keeps its Amazon popularity.
 
 **Instant updates (webhooks).** `POST /webhooks/<store>/shopify` and `/webhooks/<store>/woocommerce` accept product
 create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update

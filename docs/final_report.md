@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 290 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 296 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -396,7 +396,20 @@ unchanged) and does not fix q09, where "ice maker" is stated but names the part'
 remains a known limitation. Reproduce with `python -m src.evaluate parse-rule --split dev|test`. The tables in section
 6 keep the original parses.
 
-### 12.8 Completing the labels for 12.1 and 12.5
+### 12.8 Feedback loop: what shoppers do feeds popularity
+
+Popularity came from the Amazon interaction data, which an imported store does not have (its popularity was 0). The
+widget now reports products shown, clicks, saves and Buy clicks, with only the product, the action, a random
+per-browser id and the server's time (no query text, no IP address). An imported store's popularity becomes buy 5 +
+save 3 + click 1 points, each browser counted once per product, action and day (so one visitor cannot inflate it),
+over the last year; it is applied on every import, refresh and webhook update without re-embedding anything (0.3 s
+for the 300-product sample with simulated events). The store owner can read a 30-day summary (counts, shoppers,
+click, save and Buy-click rates, top products) with the store's API key; this is the data source for the planned
+dashboard. Caveats: the weights are a reasonable default, not tuned (there is no outcome data to tune them on), and a
+determined bot with many browser ids could still inflate popularity; the rate limit only slows it. The benchmark
+catalog keeps its original popularity, so no reported result changes.
+
+### 12.9 Completing the labels for 12.1 and 12.5
 
 Both earlier results left products unlabelled. The same LLM judge then graded the 33 test (query, product) pairs that
 the two chosen settings put in their top 10 and nobody had graded (32 done; one pair is still open after the free

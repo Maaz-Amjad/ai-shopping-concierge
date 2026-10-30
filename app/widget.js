@@ -86,6 +86,24 @@
     });
   }
 
+  // Phase 13.8: what shoppers do (shown / click / save / buy) feeds the store's popularity. A random id per browser,
+  // never the query text. Fire-and-forget: failures are ignored.
+  var clientId = (function () {
+    try {
+      var id = localStorage.getItem("cw-client");
+      if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("cw-client", id); }
+      return id;
+    } catch (e) { return "anonymous"; }
+  })();
+  function track(type, ids) {
+    if (!store || !ids || !ids.length) return;
+    try {
+      fetch(api + "/events", {method: "POST", headers: headers, keepalive: true, body: JSON.stringify(
+        {store: store, client_id: clientId, events: ids.slice(0, 50).map(function (id) { return {type: type, product_id: id}; })})
+      }).catch(function () {});
+    } catch (e) { /* never break the page */ }
+  }
+
   function price(p) { return p === null || p === undefined ? "price not listed" : "$" + Number(p).toFixed(2); }
   function stars(p) {
     return p.avg_rating === null || p.avg_rating === undefined ? "" :
@@ -162,7 +180,10 @@
         [["Save", "save"], ["Similar", "similar"], ["Buy", "buy"]].forEach(function (a) {
           a.push({product_id: p.product_id});          // the button acts on this card's product
           var b = el("button", null, a[0]);
-          b.addEventListener("click", function () { action(a[1], a[2]); });
+          b.addEventListener("click", function () {
+          track(a[1] === "similar" ? "click" : a[1], [p.product_id]);
+          action(a[1], a[2]);
+        });
           acts.appendChild(b);
         });
         c.appendChild(acts);
@@ -190,7 +211,8 @@
       return box;
     }
 
-    function show(entry) {
+    function show(entry, fresh) {
+      if (fresh && entry.bot && entry.bot.products) track("shown", entry.bot.products.map(function (p) { return p.product_id; }));
       msgs.appendChild(entry.me ? el("div", "cw-me", entry.me) : botMessage(entry.bot));
       msgs.scrollTop = msgs.scrollHeight;
     }
@@ -213,7 +235,7 @@
           if (early) early.remove();
           state = data.state;
           var entry = {bot: {text: data.text, products: data.products, comparison: data.comparison, link: data.link}};
-          log.push(entry); persist(); show(entry);
+          log.push(entry); persist(); show(entry, true);
           var url = safeUrl(data.link);
           if (url && path === "/chat/action") window.open(url, "_blank", "noopener");
         })
@@ -261,6 +283,7 @@
 
 
   function render(data) {
+    if (data.type === "answer") track("shown", (data.products || []).map(function (p) { return p.product_id; }));
     out.textContent = "";
     var pq = data.parsed || {};
     var chips = el("div", "cw-chips");

@@ -320,11 +320,13 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
 
 def write_store(name: str, catalog: pd.DataFrame, log: dict, model: Any = None, cfg: dict | None = None) -> dict:
     """Save a store's catalog and embeddings, embedding only new products or changed texts; returns the log with
-    added/removed/changed/reused counts (call with the store's lock held)."""
+    added/removed/changed/reused counts (call with the store's lock held). Popularity comes from shopper events."""
     from src.embed import encode_products, load_model
 
     cfg = cfg or load_config()
     out = STORES_DIR / name
+    catalog = catalog.copy()
+    catalog["popularity"] = catalog["product_id"].map(event_popularity(name)).fillna(0).astype(int)
     old_vectors, old_texts = previous_vectors(out, cfg["embedding"]["model"])
     keys = list(zip(catalog["product_id"], catalog["product_text"]))
     todo = [i for i, k in enumerate(keys) if k not in old_vectors]           # new products or changed text
@@ -596,6 +598,95 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
         return write_store(name, merged, log, model, cfg)
 
 
+# ---- Phase 13.8: shopper events (feedback loop) -----------------------------------------------------------
+
+EVENT_WEIGHTS = {"buy": 5, "save": 3, "click": 1, "shown": 0}   # popularity points per browser, product and day
+MAX_EVENTS = 50                                                  # kept per request
+EVENT_DAYS = 365                                                 # events older than this are ignored
+_known: dict[str, tuple[float, set]] = {}
+
+
+def _known_ids(name: str) -> set:
+    path = STORES_DIR / name / "catalog.pkl"
+    stamp = path.stat().st_mtime
+    if name not in _known or _known[name][0] != stamp:
+        _known[name] = (stamp, set(pd.read_pickle(path)["product_id"].astype(str)))
+    return _known[name][1]
+
+
+def record_events(name: str, client_id: str, events: list) -> int:
+    """Append shopper events (shown / click / save / buy of a catalog product) to stores/<name>/events.jsonl.
+    Only the type, product id, a random per-browser id and the server's time are kept: no query text, no IP."""
+    check_store_name(name)
+    if not (STORES_DIR / name / "catalog.pkl").exists():
+        raise ValueError(f"no store {name!r}; import it first")
+    known = _known_ids(name)
+    client = re.sub(r"[^A-Za-z0-9_-]", "", str(client_id))[:64] or "anonymous"
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    rows = [{"ts": ts, "client": client, "type": e["type"], "product_id": e["product_id"]}
+            for e in list(events)[:4 * MAX_EVENTS] if isinstance(e, dict) and e.get("type") in EVENT_WEIGHTS
+            and isinstance(e.get("product_id"), str) and e["product_id"] in known][:MAX_EVENTS]
+    if rows:
+        with _store_locks[f"{name}:events"]:
+            with open(STORES_DIR / name / "events.jsonl", "a", encoding="utf-8") as f:
+                f.write("".join(json.dumps(r) + "\n" for r in rows))
+    return len(rows)
+
+
+def _read_events(name: str, days: int) -> pd.DataFrame:
+    path = STORES_DIR / name / "events.jsonl"
+    cols = ["ts", "client", "type", "product_id"]
+    if not path.exists():
+        return pd.DataFrame(columns=cols)
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue                                  # a torn last line from a crash is skipped
+    df = pd.DataFrame(rows, columns=cols)
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - days * 86400))
+    return df[df["ts"] >= cutoff]
+
+
+def _scores(df: pd.DataFrame) -> pd.Series:
+    """Weighted points per product, each (browser, action, product) counted once a day: repeats cannot inflate it."""
+    if df.empty:
+        return pd.Series(dtype=int)
+    once = df.assign(day=df["ts"].str[:10]).drop_duplicates(["client", "type", "product_id", "day"])
+    points = once["type"].map(EVENT_WEIGHTS).fillna(0).astype(int).groupby(once["product_id"]).sum()
+    return points[points > 0].sort_values(ascending=False)
+
+
+def event_popularity(name: str, days: int = EVENT_DAYS) -> pd.Series:
+    """Popularity for an imported store: buy 5, save 3, click 1 points (shown 0), per browser and day."""
+    return _scores(_read_events(name, days))
+
+
+def update_popularity(name: str, model: Any = None, cfg: dict | None = None) -> dict:
+    """Recompute popularity from events and save the store (no product is embedded again)."""
+    check_store_name(name)
+    out = STORES_DIR / name
+    if not (out / "catalog.pkl").exists():
+        raise ValueError(f"no store {name!r}; import it first")
+    with store_lock(name):
+        log = json.loads((out / "import_log.json").read_text(encoding="utf-8"))
+        return write_store(name, pd.read_pickle(out / "catalog.pkl"), log, model, cfg)
+
+
+def event_summary(name: str, days: int = 30) -> dict:
+    """What shoppers did in the last `days` days, for the store owner (the coming dashboard)."""
+    df = _read_events(name, days)
+    counts = {t: int((df["type"] == t).sum()) for t in ("shown", "click", "save", "buy")}
+    rate = (lambda n: round(n / counts["shown"], 4) if counts["shown"] else None)
+    top = _scores(df).head(10)
+    return {"days": days, "counts": counts, "shoppers": int(df["client"].nunique()),
+            "click_rate": rate(counts["click"]), "save_rate": rate(counts["save"]),
+            "buy_click_rate": rate(counts["buy"]),
+            "top_products": [{"product_id": p, "score": int(s)} for p, s in top.items()]}
+
+
 def read_secrets(name: str) -> dict | None:
     """The store's secrets if they were set up; never creates them (safe for unauthenticated requests)."""
     if not valid_store_name(name):
@@ -780,12 +871,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--refresh", action="store_true",
                         help="update an imported store from its saved source (only changed products are re-embedded)")
     parser.add_argument("--every", type=float, default=0, help="with --refresh: repeat every N minutes")
+    parser.add_argument("--update-popularity", action="store_true",
+                        help="recompute popularity from shopper events (no re-embedding)")
+    parser.add_argument("--events-summary", action="store_true", help="print what shoppers did in the last 30 days")
     parser.add_argument("--secrets", action="store_true",
                         help="print the store's webhook paths, webhook secret and API key (creates them once)")
     parser.add_argument("--set-webhook-secret", default="", help="save the signing key Shopify shows for webhooks")
     parser.add_argument("--preset", default="generic", choices=sorted(PRESETS))
     parser.add_argument("--map", default="", help="field=column pairs, e.g. 'title=Name,price=Cost'")
     args = parser.parse_args(argv)
+    if args.update_popularity:
+        log = update_popularity(args.name)
+        print(f"popularity updated for {log['products']} products")
+        return
+    if args.events_summary:
+        print(json.dumps(event_summary(args.name), indent=2))
+        return
     if args.set_webhook_secret:
         set_webhook_secret(args.name, args.set_webhook_secret)
         print("saved")
