@@ -73,12 +73,29 @@ def started_by_app() -> bool:
     return PID_FILE.exists()
 
 
+def _is_our_server(pid: int) -> bool:
+    """Is `pid` still the API server this app started (and not another program that reused the id)?"""
+    try:
+        if sys.platform == "win32":
+            out = subprocess.run(["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
+                                 capture_output=True, text=True, timeout=10).stdout
+        else:
+            out = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "uvicorn" in out and "app.api" in out
+
+
 def stop_previous() -> None:
-    """Stop a connection this app started in an earlier session (its process id is in PID_FILE)."""
+    """Stop a connection this app started in an earlier session (its process id is in PID_FILE), but only if that
+    process is still our API server."""
     if not PID_FILE.exists():
         return
-    pid = int(PID_FILE.read_text(encoding="utf-8").strip() or 0)
-    if pid:
+    try:
+        pid = int(PID_FILE.read_text(encoding="utf-8").strip() or 0)
+    except ValueError:
+        pid = 0
+    if pid and _is_our_server(pid):
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
         else:

@@ -123,21 +123,14 @@ def test_unpublished_products_and_woocommerce_variations(tmp_path):
 
 
 def test_shopify_products_json_url_reads_every_page(monkeypatch):
-    import httpx
-
     pages = {1: [{"handle": f"p{i}", "title": f"P{i}", "variants": [{"price": "1"}]} for i in range(250)],
              2: [{"handle": "last", "title": "Last", "variants": [{"price": "2"}]}]}
 
-    class Resp:
-        def __init__(self, products): self.products = products
-        def raise_for_status(self): return self
-        def json(self): return {"products": self.products}
-
-    def fake_get(url, **kwargs):
+    def fake_download(url):                       # downloads go through the public-address check (security review)
         page = int(url.split("page=")[1].split("&")[0])
-        return Resp(pages.get(page, []))
+        return json.dumps({"products": pages.get(page, [])}).encode()
 
-    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(store, "_download", fake_download)
     feed = read_feed("https://shop.example/products.json")
     assert len(feed) == 251 and feed["handle"].iloc[-1] == "last"
 
@@ -849,3 +842,12 @@ def test_a_truncated_live_listing_never_mass_deletes(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "fetch_products_json", lambda url: {"products": [{"id": 1, "handle": "steel-kettle"}]})
     store.apply_store_changes("csv", delete_ids=["999"], model=FakeModel(), cfg=cfg)
     assert len(pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl")) == 3
+
+
+def test_a_lock_holder_never_deletes_a_newer_holders_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    (tmp_path / "stores" / "x").mkdir(parents=True)
+    lock = tmp_path / "stores" / "x" / ".lock"
+    with store.store_lock("x"):
+        lock.write_text("someone-else")                              # taken over as stale by another process
+    assert lock.read_text() == "someone-else"

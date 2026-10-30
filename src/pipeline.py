@@ -211,6 +211,7 @@ def rerank_candidates(cands: pd.DataFrame, query: str, catalog: pd.DataFrame, rr
     return out
 
 
+MAX_QUERY_CHARS = 500
 PRODUCT_FIELDS = ["product_id", "title", "brand", "category", "price"]
 RATING_FIELDS = ["avg_rating", "rating_count", "in_stock"]   # Phase 13.1/13.2; absent in older store imports
 SCORE_FIELDS = ["rank", "final", "s_sem", "s_pers", "s_pop", "s_rat", "cosine"]
@@ -239,6 +240,7 @@ def search_products(query: str, res: Resources, *, max_price: float | None = Non
     "not X" exclusions are applied by default (S5x, spec 8.3), since users see them as understood limits.
     Once the per-process LLM call cap is reached (app.max_llm_calls), it answers from catalog fields only (NFR-4).
     """
+    query = str(query)[:MAX_QUERY_CHARS]                  # bounds LLM prompt size and cost (security review)
     explicit = {k: v for k, v in {"max_price": max_price, "min_price": min_price, "category": category,
                                   "brand": brand}.items() if v is not None}
     try:

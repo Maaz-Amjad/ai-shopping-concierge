@@ -1,8 +1,9 @@
 # Shopping Concierge API (+ widget, webhooks). Build: docker build -t concierge .
 # Run (data, embeddings, imported stores and the LLM cache stay outside the image):
-#   docker run -p 8000:8000 --env-file .env -e CONCIERGE_ALLOWED_ORIGINS=https://mystore.com \
+#   docker run -p 127.0.0.1:8000:8000 --env-file .env -e CONCIERGE_ALLOWED_ORIGINS=https://mystore.com \
 #     -v ./data:/app/data -v ./artifacts:/app/artifacts -v ./stores:/app/stores concierge
-# Put an HTTPS reverse proxy (e.g. Caddy, nginx) in front and set app.trust_proxy: true in config.yaml.
+# Put an HTTPS reverse proxy (e.g. Caddy, nginx) in front and set app.trust_proxy: true in config.yaml, and publish
+# the port on 127.0.0.1 only: with trust_proxy on, a client reaching the container directly could fake its address.
 # Linux hosts: the container runs as uid 1000; if your files belong to another user, add --user "$(id -u):$(id -g)".
 FROM python:3.12-slim
 

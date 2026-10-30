@@ -375,7 +375,7 @@ def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user
     try:
         call = res.client.generate_tool_call(build_prompt(message, state, res), PROMPT_VERSION, TOOLS)
     except (ValueError, CallLimitReached, QuotaExhausted, Exception) as exc:  # noqa: BLE001 - degrade to search
-        call, fallback = {"name": "search", "args": {"request": message}}, f"{type(exc).__name__}: {exc}"[:200]
+        call, fallback = {"name": "search", "args": {"request": message}}, type(exc).__name__   # no details out
     name, args = call["name"], call.get("args") or {}
     if not isinstance(args, dict):
         name, args, fallback = "search", {}, f"tool arguments are not an object: {str(args)[:100]}"
@@ -383,7 +383,7 @@ def chat_turn(message: str, state: ChatState | dict | None, res: Resources, user
         result = _dispatch(name, args, message, state, res, user_id, n, link, plain=fallback is not None,
                            on_products=on_products)
     except (TypeError, ValueError) as exc:   # arguments a weaker model got wrong (ValidationError is a ValueError)
-        fallback = f"{type(exc).__name__}: {exc}"[:200]
+        fallback = type(exc).__name__
         result = _plain_search(message, clean_state(state, res), res, user_id, n, link, on_products)
     result.flags.update(tool_args=args, fallback=fallback)
     result.state.history = (result.state.history + [("shopper", message), ("assistant", result.text[:MAX_TEXT])])[

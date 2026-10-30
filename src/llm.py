@@ -33,7 +33,7 @@ REQUEST_TIMEOUT_MS = 10 * 60 * 1000
 QUOTA_DAY_TZ = timezone(timedelta(hours=-7))
 
 _last_call_at: dict[str, float] = {}  # process-wide rate limiter state, per model
-_call_lock = threading.Lock()  # one uncached call at a time per process (API thread pool, shared clients)
+_call_lock = threading.Lock()  # short critical sections only: call cap, rate-limit slot, cache append
 
 
 class QuotaExhausted(RuntimeError):
@@ -255,9 +255,11 @@ class LLMClient:
         if self.cache_path.exists():
             with open(self.cache_path, encoding="utf-8") as f:
                 for line in f:
-                    if line.strip():
+                    try:
                         row = json.loads(line)
                         cache[row["key"]] = row["response"]
+                    except (ValueError, KeyError, TypeError):
+                        continue                  # a torn line from a crash mid-write is skipped
         return cache
 
     def cache_key(self, prompt: str, prompt_version: str, schema: type[BaseModel] | None) -> str:
@@ -275,20 +277,23 @@ class LLMClient:
 
     # ---- calling -------------------------------------------------------------
     def _wait_for_rate_limit(self) -> None:
-        last = _last_call_at.get(self.model)
-        if last is not None:
-            wait = self.min_interval - (self.clock() - last)
-            if wait > 0:
-                self.sleep(wait)
-        _last_call_at[self.model] = self.clock()
+        """Reserve the next call slot under the lock, then wait outside it (other threads keep going)."""
+        with _call_lock:
+            now = self.clock()
+            last = _last_call_at.get(self.model)
+            slot = now if last is None else max(now, last + self.min_interval)
+            _last_call_at[self.model] = slot
+        if slot - now > 0:
+            self.sleep(slot - now)
 
     def _call_with_backoff(self, prompt: str, schema: type[BaseModel] | None, prompt_version: str,
                            tools: list[dict] | None = None) -> str:
         for attempt in range(1, self.max_attempts + 1):
-            if self.max_calls is not None and self.calls_made >= self.max_calls:
-                raise CallLimitReached(f"max_calls={self.max_calls} reached for {self.model}")
+            with _call_lock:                      # the cap is shared by all threads using this client
+                if self.max_calls is not None and self.calls_made >= self.max_calls:
+                    raise CallLimitReached(f"max_calls={self.max_calls} reached for {self.model}")
+                self.calls_made += 1
             self._wait_for_rate_limit()
-            self.calls_made += 1
             try:
                 if tools:
                     text = self.tool_transport(self.model, prompt, tools, self.temperature, self.max_output_tokens)
@@ -316,6 +321,10 @@ class LLMClient:
         raise AssertionError("unreachable")
 
     def _log_call(self, prompt_version: str, status: str) -> None:
+        with _call_lock:
+            self._log_unlocked(prompt_version, status)
+
+    def _log_unlocked(self, prompt_version: str, status: str) -> None:
         self._append_jsonl(self.call_log_path, {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "model": self.model, "prompt_version": prompt_version, "status": status,
@@ -335,11 +344,7 @@ class LLMClient:
         if key in self._cache:
             self.cache_hits += 1
             return self._cache[key]
-        with _call_lock:                 # cap check, rate limit, call and cache append happen as one step
-            if key in self._cache:       # another thread just fetched it
-                self.cache_hits += 1
-                return self._cache[key]
-            return self._call_and_store(key, prompt, schema, prompt_version, tools)
+        return self._call_and_store(key, prompt, schema, prompt_version, tools)    # calls run in parallel
 
     def _call_and_store(self, key: str, prompt: str, schema: type[BaseModel] | None, prompt_version: str,
                         tools: list[dict] | None = None) -> str:
@@ -352,10 +357,12 @@ class LLMClient:
             schema.model_validate_json(text)  # raises ValidationError (empty text included)
         if not text.strip():
             return text
-        self._cache[key] = text
-        self._append_jsonl(self.cache_path, {
-            "key": key, "model": self.model, "prompt_version": prompt_version, "response": text,
-        })
+        with _call_lock:
+            if key not in self._cache:
+                self._cache[key] = text
+                self._append_jsonl(self.cache_path, {
+                    "key": key, "model": self.model, "prompt_version": prompt_version, "response": text,
+                })
         return text
 
     def generate_json(self, prompt: str, prompt_version: str, schema: type[BaseModel]) -> BaseModel:

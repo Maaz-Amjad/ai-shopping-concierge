@@ -46,7 +46,7 @@ st.set_page_config(page_title="Shopping Assistant", page_icon="🛒", layout="wi
 
 
 # ---------------- helpers ----------------
-@st.cache_resource(show_spinner="Getting the store ready (first time takes a minute)…")
+@st.cache_resource(show_spinner="Getting the store ready (first time takes a minute)…", max_entries=4)
 def load(store: str | None, version: float):
     cfg = load_config()
     return load_resources(app_config(cfg), max_calls=cfg.get("app", {}).get("max_llm_calls"), store=store)
@@ -439,8 +439,12 @@ with add_tab:
                     st.error(f"Couldn't start the connection: {exc}")
         with st.expander("Add the search box to your website"):
             st.markdown("Click the copy icon on the box below, then paste it where the search box should appear:")
+            key_attr = ""
+            if load_config().get("app", {}).get("require_api_key") and target:   # keys on: the widget needs one
+                key_attr = f' data-key="{store_secrets(target)["api_key"]}"'
             st.code(f'<div id="concierge-widget"></div>\n'
-                    f'<script src="{connection.URL}/widget.js" data-store="{target}"></script>', language="html")
+                    f'<script src="{connection.URL}/widget.js" data-store="{target}"{key_attr}></script>',
+                    language="html")
             st.markdown("- **Shopify:** Online Store → Themes → Customize → add a *Custom Liquid* section → paste.\n"
                         "- **WooCommerce / WordPress:** edit a page → add a *Custom HTML* block → paste.\n"
                         "- **Other websites:** paste it into the page's HTML, or send it to your web developer.")

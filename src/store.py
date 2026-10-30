@@ -66,10 +66,51 @@ def check_store_name(name: str) -> None:
         raise ValueError(f"invalid store name {name!r}: use 1-64 letters, digits, '-' or '_'")
 
 
-def _get_json(url: str) -> Any:
+MAX_FEED_BYTES = 50 * 1024 * 1024          # per downloaded page or file
+
+
+def public_url(url: str) -> str:
+    """Only https/http URLs whose host resolves to public addresses (no loopback, private, link-local or reserved
+    networks, e.g. cloud metadata): store links cannot be used to reach the server's own network."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = (parts.hostname or "").rstrip(".")
+    if parts.scheme not in ("http", "https") or not host:
+        raise ValueError("only public http(s) addresses can be read")
+    try:
+        infos = socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80))
+    except OSError:
+        raise ValueError(f"cannot resolve {host}") from None
+    for info in infos:
+        if not ipaddress.ip_address(info[4][0].split("%")[0]).is_global:
+            raise ValueError(f"{host} is not a public address")
+    return url
+
+
+def _download(url: str) -> bytes:
+    """GET with the public-address check on every redirect and a size cap."""
     import httpx
 
-    return httpx.get(url, timeout=30, follow_redirects=True).raise_for_status().json()
+    for _ in range(5):
+        with httpx.stream("GET", public_url(url), timeout=30, follow_redirects=False) as r:
+            if r.is_redirect:
+                url = str(r.url.join(r.headers.get("location", "")))
+                continue
+            r.raise_for_status()
+            body = b""
+            for chunk in r.iter_bytes():
+                body += chunk
+                if len(body) > MAX_FEED_BYTES:
+                    raise ValueError("the feed is too large")
+            return body
+    raise ValueError("too many redirects")
+
+
+def _get_json(url: str) -> Any:
+    return json.loads(_download(url))
 
 
 def fetch_products_json(url: str) -> Any:
@@ -97,6 +138,10 @@ def read_feed(source: str | Path) -> pd.DataFrame:
         if isinstance(data, dict) and "products" in data:
             data = [flatten_shopify(p) for p in data["products"]]
         return pd.DataFrame(data)
+    if source.startswith(("http://", "https://")):           # remote CSV: same address check and size cap
+        import io
+
+        return pd.read_csv(io.BytesIO(_download(source)), dtype=str, keep_default_na=False)
     return pd.read_csv(source, dtype=str, keep_default_na=False)
 
 
@@ -368,7 +413,8 @@ def store_lock(name: str, timeout: float = 60.0):
         while True:
             try:
                 fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(fd, str(os.getpid()).encode())
+                token = f"{os.getpid()}-{secrets.token_hex(8)}"
+                os.write(fd, token.encode())
                 os.close(fd)
                 break
             except FileExistsError:
@@ -384,7 +430,11 @@ def store_lock(name: str, timeout: float = 60.0):
         try:
             yield
         finally:
-            path.unlink(missing_ok=True)
+            try:                                          # only our own lock: a newer holder's file is left alone
+                if path.read_text(encoding="utf-8") == token:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
     finally:
         _store_locks[name].release()
 
@@ -579,7 +629,10 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
                            if isinstance(p, dict) and p.get("handle")}
             except Exception:  # noqa: BLE001 - the next refresh catches up
                 handles = {}
-            if handles:                                   # never empty the store on a failed or empty read
+            truncated = len((live or {}).get("products", [])) >= PAGE_SIZE * MAX_PAGES
+            if handles and truncated:                     # an incomplete listing proves nothing about a product
+                log["not_found"] = unmatched
+            elif handles:                                 # never empty the store on a failed or empty read
                 drop |= ~pid.isin(set(handles) | new_ids)
                 catalog["source_id"] = pid.map(handles).where(pid.isin(set(handles)), catalog["source_id"])
             else:
@@ -606,6 +659,7 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
 
 EVENT_WEIGHTS = {"buy": 5, "save": 3, "click": 1, "shown": 0}   # popularity points per browser, product and day
 MAX_EVENTS = 50                                                  # kept per request
+MAX_ACTIONS = 10                                                 # of which clicks, saves and buys
 EVENT_DAYS = 365                                                 # events older than this are deleted
 MAX_EVENT_BYTES = 20 * 1024 * 1024                               # events.jsonl is compacted beyond this
 _known: dict[str, tuple[float, set]] = {}
@@ -633,6 +687,8 @@ def record_events(name: str, client_id: str, events: list) -> int:
             for e in list(events)[:4 * MAX_EVENTS] if isinstance(e, dict) and isinstance(e.get("type"), str)
             and e["type"] in EVENT_WEIGHTS and isinstance(e.get("product_id"), str) and e["product_id"] in known
             ][:MAX_EVENTS]
+    actions = [r for r in rows if r["type"] != "shown"][:MAX_ACTIONS]   # at most a few clicks/saves/buys per call
+    rows = [r for r in rows if r["type"] == "shown"] + actions
     if rows:
         path = STORES_DIR / name / "events.jsonl"
         with _store_locks[f"{name}:events"]:
@@ -775,9 +831,17 @@ def store_secrets(name: str) -> dict:
         missing = [k for k in ("webhook_secret", "api_key", "admin_key") if not values.get(k)]
         if missing:
             values.update({k: secrets.token_urlsafe(32) for k in missing})
-            path.write_text(json.dumps(values), encoding="utf-8")
-            os.chmod(path, 0o600)                          # owner only (on Linux/macOS)
+            _write_secrets(path, values)
         return values
+
+
+def _write_secrets(path: Path, values: dict) -> None:
+    """Owner-only (0600 on Linux/macOS; on Windows the folder's permissions apply) and swapped in atomically."""
+    tmp = path.with_name(f"secrets.json.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(values))
+    os.replace(tmp, path)
 
 
 def set_webhook_secret(name: str, secret: str) -> None:
@@ -789,7 +853,7 @@ def set_webhook_secret(name: str, secret: str) -> None:
     values = store_secrets(name)
     with _store_locks[f"{name}:secrets"]:
         values["webhook_secret"] = secret
-        (STORES_DIR / name / "secrets.json").write_text(json.dumps(values), encoding="utf-8")
+        _write_secrets(STORES_DIR / name / "secrets.json", values)
 
 
 def save_store_files(out: Path, catalog: pd.DataFrame, emb: np.ndarray) -> None:
@@ -880,18 +944,25 @@ def store_name_from(text: str) -> str:
 def shopify_feed_url(address: str) -> str:
     """'mystore.com' or 'https://mystore.com/collections/x?y' -> 'https://mystore.com/products.json'.
 
-    Only public domain names are accepted (no IP addresses, localhost or intranet names), so the link can only
-    reach a real online store.
+    Only public-looking domain names are accepted here (no IP addresses, localhost or intranet names); every fetch
+    also checks that the name resolves to public addresses (public_url), including after redirects.
     """
     import ipaddress
 
+    import socket
+
     host = re.split(r"[/?#]", re.sub(r"^https?://", "", address.strip(), flags=re.I))[0].lower()
     host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host          # drop a port
+    host = host.rstrip(".")                                                    # "localhost." == "localhost"
     try:
         ipaddress.ip_address(host.strip("[]"))
         is_ip = True
     except ValueError:
-        is_ip = False
+        try:                                    # also numeric forms such as 0x7f.1, 127.1 or 2130706433
+            socket.inet_aton(host)
+            is_ip = True
+        except OSError:
+            is_ip = False
     if not host or is_ip or "." not in host or host.endswith((".local", ".localhost", ".internal")) \
             or not re.fullmatch(r"[a-z0-9.-]+", host):
         raise ValueError("enter the store's public web address, e.g. mystore.com")

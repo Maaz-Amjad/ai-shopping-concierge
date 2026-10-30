@@ -32,6 +32,7 @@ app:
   require_api_key: false
   trust_proxy: false
   request_log: artifacts/api_requests.jsonl     # method, path, store, status, ms; no query text, no IP address
+  max_concurrent_llm: 4                         # LLM requests in progress at once; more get 503 + Retry-After
   # production weights for the app, API and MCP server (Phase 13.1): rating term chosen on dev (w_rat 0.10);
   # test effect on relevance neutral. The benchmark and experiments keep the spec weights in `ranking` above.
   # pers_factor_with_limits (Phase 13.3): share of w_pers kept when a request states price/category/brand limits.

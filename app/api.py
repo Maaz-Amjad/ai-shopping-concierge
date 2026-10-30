@@ -4,6 +4,7 @@ Run: .venv/Scripts/python.exe -m uvicorn app.api:app --port 8000
 Store selection: ?store=<name> per request (stores built with `python -m src.store`); no store = benchmark catalog.
 Binds to 127.0.0.1 by default. Before exposing it: HTTPS reverse proxy, the per-client rate limit
 (app.rate_limit_per_minute), optionally API keys (app.require_api_key) and store webhooks (/webhooks/<store>/<platform>).
+The request log and events keep no query text or IP; the shared LLM response cache does hold understood requests.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ APP_DIR = Path(__file__).resolve().parent
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=500)                 # bounds LLM prompt size and cost
     store: str | None = None
     user_id: str | None = None
     n: int = Field(5, ge=1, le=20)
@@ -76,6 +77,9 @@ def store_version(store: str | None) -> float:
 
 
 MAX_WEBHOOK_BYTES = 2 * 1024 * 1024
+MAX_BODY_BYTES = 256 * 1024                                 # every other request body
+MAX_LOG_BYTES = 50 * 1024 * 1024                            # request log is rotated beyond this
+CLIENT_IDS_PER_ADDRESS = 5                                  # browser ids accepted per address and day (events)
 OPEN_PATHS = {"/health", "/widget.js", "/", "/docs", "/openapi.json", "/docs/oauth2-redirect", "/redoc"}
 LLM_PATHS = {"/search", "/chat", "/search/stream", "/chat/stream"}
 WEBHOOK_TOPICS = {"shopify": ({"products/create", "products/update"}, {"products/delete"}),
@@ -135,7 +139,8 @@ def signature(secret: str, body: bytes) -> str:
 
 def create_app(loader: Callable[[str | None], Resources] | None = None,
                allowed_origins: list[str] | None = None, request_log: Path | None = None,
-               rate_limits: dict[str, int] | None = None, require_api_key: bool | None = None) -> FastAPI:
+               rate_limits: dict[str, int] | None = None, require_api_key: bool | None = None,
+               max_concurrent_llm: int | None = None) -> FastAPI:
     """Build the app; `loader(store)` returns Resources (cached per store and import). Tests pass a fake loader.
 
     LLM calls are capped per process (config app.max_llm_calls, NFR-3) and only listed origins may call the API
@@ -152,7 +157,9 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     shared: dict[str, object] = {}                         # one LLM client (call budget) per process
     need_key = app_cfg.get("require_api_key", False) if require_api_key is None else require_api_key
     trust_proxy = bool(app_cfg.get("trust_proxy", False))
-    limiter, log_lock = RateLimiter(), threading.Lock()
+    limiter, log_lock, cache_lock = RateLimiter(), threading.Lock(), threading.Lock()
+    llm_slots = threading.BoundedSemaphore(int(max_concurrent_llm or app_cfg.get("max_concurrent_llm", 4)))
+    ids_seen: dict[tuple[str, str], set] = {}              # (address, UTC day) -> browser ids; memory only
     seen_deliveries: OrderedDict[tuple[str, str], None] = OrderedDict()
     loader = loader or (lambda store: load_resources(app_config(cfg), max_calls=app_cfg.get("max_llm_calls"), store=store))
     env_origins = [o.strip() for o in os.environ.get("CONCIERGE_ALLOWED_ORIGINS", "").split(",") if o.strip()]
@@ -164,19 +171,25 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         if store is not None and not valid_store_name(store):
             raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
         key = (store, store_version(store))
-        if key not in cache:
-            try:
-                res = loader(store)
-            except FileNotFoundError:
-                raise HTTPException(404, f"unknown store {store!r}; import it with python -m src.store") from None
-            for old in [k for k in cache if k[0] == store]:   # an updated store replaces its old copy
-                del cache[old]
-            if "client" in shared:
-                res.client = shared["client"]               # the per-process LLM cap survives reloads
-            else:
-                shared["client"] = res.client
-            cache[key] = res
-        return cache[key]
+        with cache_lock:                                         # one load per store version, even when concurrent
+            if key not in cache:
+                try:
+                    res = loader(store)
+                except FileNotFoundError:
+                    raise HTTPException(404, f"unknown store {store!r}; import it with python -m src.store") from None
+                for old in [k for k in cache if k[0] == store]:   # an updated store replaces its old copy
+                    del cache[old]
+                if "client" in shared:
+                    res.client = shared["client"]               # the per-process LLM cap survives reloads
+                else:
+                    shared["client"] = res.client
+                cache[key] = res
+            return cache[key]
+
+    def client_address(request: Request) -> str:
+        """The caller's address; behind a trusted proxy the last X-Forwarded-For entry (the one the proxy added)."""
+        forwarded = request.headers.get("x-forwarded-for", "") if trust_proxy else ""
+        return forwarded.split(",")[-1].strip() or (request.client.host if request.client else "?")
 
     def check_key(store: str | None, key: str | None) -> None:
         """When API keys are on: the store's key (stores/<name>/secrets.json) or CONCIERGE_API_KEY for the demo.
@@ -200,16 +213,34 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         group = None if path in OPEN_PATHS or request.method == "OPTIONS" else "webhook" \
             if path.startswith("/webhooks/") else "llm" if path in LLM_PATHS else \
             "events" if path == "/events" else "other"
-        forwarded = request.headers.get("x-forwarded-for", "") if trust_proxy else ""
-        client = forwarded.split(",")[-1].strip() or (request.client.host if request.client else "?")   # the
-        # last entry is the one the trusted proxy added; earlier ones come from the client and can be made up
+        client = client_address(request)
+        try:
+            size = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            return JSONResponse({"detail": "invalid Content-Length"}, status_code=400)
+        cap = MAX_WEBHOOK_BYTES if group == "webhook" else MAX_BODY_BYTES
         wait = limiter.wait((client, group), int(limits[group])) if group else 0.0
+        held = False
         if wait:
             response = JSONResponse({"detail": "too many requests; please try again shortly"}, status_code=429,
                                     headers={"Retry-After": str(int(wait) + 1)})
+        elif size > cap:
+            response = JSONResponse({"detail": "request body too large"}, status_code=413)
+        elif group == "llm" and not llm_slots.acquire(blocking=False):
+            response = JSONResponse({"detail": "the assistant is busy; please try again in a few seconds"},
+                                    status_code=503, headers={"Retry-After": "5"})
         else:
-            response = await call_next(request)
-        if request_log is None:
+            held = group == "llm"
+            try:
+                response = await call_next(request)
+            except BaseException:
+                if held:
+                    llm_slots.release()
+                raise
+        if held and not path.endswith("/stream"):
+            llm_slots.release()
+            held = False
+        if request_log is None and not held:
             return response
 
         def write(error: bool = False) -> None:
@@ -218,15 +249,20 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
                     "ms": round((time.perf_counter() - start) * 1000, 1)}
             if error:
                 line["stream_error"] = True
+            if request_log is None:
+                return
             with log_lock:
-                Path(request_log).parent.mkdir(parents=True, exist_ok=True)
-                with open(request_log, "a", encoding="utf-8") as f:
+                log_path = Path(request_log)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                if log_path.exists() and log_path.stat().st_size > MAX_LOG_BYTES:   # keep one older file
+                    os.replace(log_path, log_path.with_name(log_path.name + ".1"))
+                with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(line) + "\n")
 
         if not path.endswith("/stream"):
             write()
             return response
-        body = response.body_iterator                     # streams: log when the last line has been sent
+        body = response.body_iterator                     # streams: log and free the LLM slot at the end
 
         async def logged():
             error = False
@@ -235,6 +271,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
                     error = error or b'"type": "error"' in (chunk if isinstance(chunk, bytes) else chunk.encode())
                     yield chunk
             finally:
+                if held:
+                    llm_slots.release()
                 write(error)
 
         response.body_iterator = logged()
@@ -244,7 +282,7 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
                        allow_headers=["Content-Type", "X-API-Key"])                            # 429s carry CORS
 
     @app.get("/health")
-    def health() -> dict:
+    async def health() -> dict:                     # on the event loop: answers even when worker threads are busy
         return {"status": "ok"}
 
     @app.get("/meta")
@@ -341,7 +379,11 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
             raise HTTPException(404, "unknown platform; use shopify or woocommerce")
         if not valid_store_name(store):
             raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
-        if int(request.headers.get("content-length") or 0) > MAX_WEBHOOK_BYTES:
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            raise HTTPException(400, "invalid Content-Length") from None
+        if declared > MAX_WEBHOOK_BYTES:
             raise HTTPException(413, "webhook body too large")
         body = b""
         async for chunk in request.stream():
@@ -396,14 +438,24 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
         return {"status": "stale" if log.get("stale") and not log.get("applied") else "updated"}
 
     @app.post("/events")
-    def events(req: EventsRequest, x_api_key: str | None = Header(None)) -> dict:
-        """Shopper events from the widget (shown / click / save / buy). Demo catalog events are not stored."""
+    def events(req: EventsRequest, request: Request, x_api_key: str | None = Header(None)) -> dict:
+        """Shopper events from the widget (shown / click / save / buy). Demo catalog events are not stored. One
+        address may use at most CLIENT_IDS_PER_ADDRESS browser ids a day (kept in memory only, never stored), so
+        rotating ids from one machine cannot inflate popularity."""
         store = req.store or None
         check_key(store, x_api_key)
         if store is None:
             return {"recorded": 0}
         if not valid_store_name(store):
             raise HTTPException(400, "invalid store name: use letters, digits, '-' or '_'")
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        with cache_lock:
+            for old in [k for k in ids_seen if k[1] != day]:
+                del ids_seen[old]
+            ids = ids_seen.setdefault((client_address(request), day), set())
+            if req.client_id not in ids and len(ids) >= CLIENT_IDS_PER_ADDRESS:
+                return {"recorded": 0}
+            ids.add(req.client_id)
         try:
             return {"recorded": store_mod.record_events(store, req.client_id, req.events)}
         except ValueError:

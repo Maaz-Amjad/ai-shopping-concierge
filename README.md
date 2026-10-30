@@ -10,7 +10,7 @@
 [![Gemini](https://img.shields.io/badge/LLM-Gemini%20%7C%20OpenAI%20%7C%20Claude-4285F4?logo=google&logoColor=white)](#-configuration-reference)
 [![Embeddings](https://img.shields.io/badge/Embeddings-BGE--small-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/BAAI/bge-small-en-v1.5)
 [![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](#-mcp-server-for-ai-agents)
-[![Tests](https://img.shields.io/badge/tests-305%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
+[![Tests](https://img.shields.io/badge/tests-304%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
 
 *Ask for "a quiet countertop ice maker under $150" and get products that really are under $150, ranked for you,
 explained only with facts from the catalog.*
@@ -199,7 +199,7 @@ Notebooks import from `src/` and run with an LLM call budget of zero (cached ans
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Linux/macOS: .venv/bin/python
 cp .env.example .env                                                   # then add your key after GEMINI_API_KEY=
-.venv/Scripts/python.exe -m pytest -q                                  # 305 passed, no API calls
+.venv/Scripts/python.exe -m pytest -q                                  # 304 passed in a fresh clone, no API calls
 ```
 
 ### Get the data and build the index
@@ -375,7 +375,8 @@ ai-shopping-concierge/
 | `app.max_llm_calls` | 300 | LLM calls per server process, then catalog-field answers |
 | `app.allowed_origins` | localhost | Websites allowed to call the API from a browser |
 | `app.rate_limit_per_minute` | 30 LLM / 120 other | Per-client limits (webhooks 600, events 300) |
-| `app.require_api_key` · `app.trust_proxy` | false · false | API keys; trust `X-Forwarded-For` behind a proxy |
+| `app.require_api_key` · `app.trust_proxy` | false · false | API keys; trust `X-Forwarded-For` behind a proxy (then publish the port on 127.0.0.1 only) |
+| `app.max_concurrent_llm` | 4 | LLM requests in progress at once; more get 503 + Retry-After |
 
 ### Environment variables
 
@@ -404,7 +405,7 @@ All versions are pinned in [requirements.txt](requirements.txt).
 ## 🧪 Testing
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q      # 305 passed
+.venv/Scripts/python.exe -m pytest -q      # 304 passed
 ```
 
 | Area | Test files |
@@ -440,10 +441,11 @@ All versions are pinned in [requirements.txt](requirements.txt).
 | Answer | invented ID, wrong price or brand | regenerate once, then a template answer from catalog fields |
 | LLM | timeouts, 429, 503 | retries with backoff; per-process call cap; cached answers reused |
 | Chat | unusable tool call, forged state | plain search fallback; client state re-validated every turn |
-| API | abuse | per-client rate limits, optional API keys, CORS allow-list, 2 MB webhook bodies |
+| API | abuse, cost | per-client rate limits; queries ≤ 500 characters, bodies ≤ 256 KB (webhooks 2 MB); at most `app.max_concurrent_llm` LLM requests at once, then 503 + Retry-After; `/health` never blocked; optional API keys; CORS allow-list |
+| Store links | server-side request forgery | feed and Shopify addresses must resolve to public addresses, checked again on every redirect; 50 MB download cap |
 | Webhooks | forged, replayed, out of order | HMAC check, duplicate ids ignored, older updates skipped, deletions remembered |
 | Data | concurrent writers, crashes | lock file per store, atomic file swaps with rollback |
-| Privacy | shopper data | no query text or IP stored; random browser id renewed every 30 days; events kept one year |
+| Privacy | shopper data | request log and events keep no query text or IP; random browser id renewed every 30 days; events kept one year; at most 5 browser ids per address a day (checked in memory only). The LLM response cache does hold the understood requests (needed for reproducibility); clear `artifacts/llm_cache.jsonl` to remove them |
 | Untrusted text | product descriptions, chat state | treated as data in prompts; widget renders text only |
 
 ---
@@ -474,6 +476,8 @@ on the development machine.
 | Webhooks return 401 | Wrong or missing signing key | Shopify: `--set-webhook-secret`; WooCommerce: use the secret from `--secrets` |
 | A store import says "feed has no column" | Unrecognised export layout | Use `--map field=column,...` or the column questions in the app |
 | `ImportError` after updating | The app was running old code | Restart the app |
+| `503` "assistant is busy" | More LLM requests at once than `app.max_concurrent_llm` | Retry after a few seconds, or raise the limit |
+| Streamlit reachable from other machines | Started outside the project folder, so `.streamlit/config.toml` was not read | Start it from the project folder, or add `--server.address localhost` |
 
 ---
 

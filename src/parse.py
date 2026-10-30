@@ -191,7 +191,7 @@ def parse_query(query: str, meta: CatalogMeta, client: LLMClient, raise_on_quota
             error = "quota exhausted"
             break
         except Exception as exc:  # noqa: BLE001 - any API failure degrades gracefully
-            error = f"{type(exc).__name__}: {exc}"[:300]
+            error = type(exc).__name__                    # the type only: messages can hold hosts or provider text
             break
     return ParseResult(ParsedQuery(semantic_query=query.strip()), [f"parser fallback: {error}"],
                        fallback=True, llm_attempts=attempt)

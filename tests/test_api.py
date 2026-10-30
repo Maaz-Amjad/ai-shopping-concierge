@@ -453,7 +453,13 @@ def test_llm_endpoints_answer_busy_instead_of_queueing(tmp_path, monkeypatch):
     res = resources(tmp_path, [])
     monkeypatch.setattr(api, "search_products", lambda *a, **k: (entered.set(), gate.wait(5), None)[2])
     client = TestClient(create_app(lambda s: res, max_concurrent_llm=1))
-    first = threading.Thread(target=lambda: client.post("/search", json={"query": "ice maker"}))
+    def first_request():
+        try:
+            client.post("/search", json={"query": "ice maker"})
+        except Exception:  # noqa: BLE001 - the stub returns nothing; only the busy answer is under test
+            pass
+
+    first = threading.Thread(target=first_request)
     first.start()
     assert entered.wait(5)
     busy = client.post("/search", json={"query": "ice maker"})

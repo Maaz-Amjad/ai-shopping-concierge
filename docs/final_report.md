@@ -202,6 +202,13 @@ satisfy the parsed limits" besides missing prices; see section 9) and checked by
   files on one disk, so running several server copies needs a shared store (Redis, a database). The Dockerfile was
   written but not built on the development machine. WooCommerce delete webhooks carry no time, so a late delete can
   remove a restored product until the next refresh. Everything runs on CPU, which rules out the cross-encoder.
+- **Security review (30 Oct).** A full-project review found no exposed secrets and no injection, XSS or path
+  traversal, and two denial-of-service problems that were fixed: unbounded queries (now 500 characters; bodies 256 KB)
+  and an LLM client that let only one uncached call run at a time per process (calls now run in parallel, at most
+  `app.max_concurrent_llm` LLM requests at once, then a quick 503). Store links must resolve to public addresses on
+  every redirect. Remaining, documented risks: a determined attacker with many addresses can still inflate popularity
+  through forged events; a DNS answer that changes between the check and the request is not caught; the LLM response
+  cache keeps the understood requests (no identity, needed for reproducibility); the in-memory limits are per process.
 
 ## 9. Departures from the specification
 
@@ -222,7 +229,7 @@ by (model, prompt version, schema, settings, prompt). All reported tables are re
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
 `04_evaluation` (which run with an LLM call budget of zero); the section 12 results by `python -m src.evaluate
 rating|adaptive|hybrid|rerank --split dev|test` (add `--completed` for section 12.9) and the chat evaluation by
-`python -m src.agent --limit 0`. 305 unit and integration tests run offline with a fake client.
+`python -m src.agent --limit 0`. 304 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
