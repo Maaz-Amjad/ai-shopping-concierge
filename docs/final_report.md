@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 299 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 300 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -428,6 +428,25 @@ so the S5 baseline moves too (NDCG@10 0.738 → 0.730); each comparison below us
 The two readings of the hybrid result now agree: keyword matching brought in mostly relevant products, and the gain is
 modest and indicative (the interval includes zero). The rating result stays neutral. Reproduce with
 `python -m src.evaluate rating|hybrid --split test --completed`.
+
+### 12.10 Cross-encoder re-ranker (negative, off by default)
+
+A cross-encoder reads the request and each product together, which is usually more accurate than comparing two
+separate embeddings. BAAI/bge-reranker-base re-scored the top 30 of S5, blended with the dense score:
+(1 − b) × dense + b × cross-encoder, b from {0, 0.25, 0.5, 0.75, 1}, chosen on dev (rule fixed first).
+
+| b = 0.25 vs S5 | Judged-only NDCG@10 change [95% CI] | Plain change | Unjudged in top 10 |
+|---|---|---|---|
+| Dev (used to choose) | +0.009 [−0.001, +0.021] | +0.002 | 2 % |
+| Test (run once) | −0.012 [−0.038, +0.010] | −0.012 | 0 % |
+
+The small dev gain did not carry over: on test the re-ranker is neutral to slightly worse, with every product
+labelled. Larger b pulls in more unlabelled products and lowers the plain score sharply (−0.17 at b = 1 on test). It is
+also slow on a CPU: re-scoring 30 products took a median of 12.7 s per query on dev and 16.5 s on test (one test query
+took about 16 minutes, most likely the machine being busy, so the p95 is not meaningful), far beyond the 6 s
+end-to-end target. Before the test run it was decided to leave it off by default whatever the result; it remains
+available as a setting (`app.retrieval.rerank: {model, top_k, weight}`) for a server with a GPU. A re-ranker trained or
+tuned on shopping data, and a larger benchmark, would be needed to revisit this.
 
 ## 13. Future work
 

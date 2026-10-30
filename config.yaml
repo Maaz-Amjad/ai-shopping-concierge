@@ -40,3 +40,5 @@ app:
   # Phase 13.5: share of BM25 keyword score blended into filter-first retrieval (chosen on dev; test: judged-only
   # NDCG@10 +0.044 [-0.010, +0.109], plain -0.025 with 12 % unjudged). Benchmark `retrieval` has none (= S5).
   retrieval: {hybrid_alpha: 0.5}
+  # optional cross-encoder (Phase 13.9; test -0.012 and 13-17 s per query on CPU, so off): add to retrieval above
+  #   rerank: {model: BAAI/bge-reranker-base, top_k: 30, weight: 0.25}

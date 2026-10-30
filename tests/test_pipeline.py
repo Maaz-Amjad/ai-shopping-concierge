@@ -199,3 +199,21 @@ def test_products_are_handed_over_before_the_answer_is_generated(tmp_path):
     out = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"),
                   on_products=lambda view: events.append(("products", [p["product_id"] for p in view["products"]])))
     assert events == [("products", ["A", "B"]), "generate"] and out.answer.answer is not None
+
+
+def test_optional_cross_encoder_reorders_the_top_candidates(tmp_path, monkeypatch):
+    from src import pipeline
+
+    class FakeCrossEncoder:
+        def predict(self, pairs, batch_size=32):
+            return [1.0 if "b" in text else 0.0 for _, text in pairs]       # prefers product B
+
+    monkeypatch.setattr(pipeline, "cross_encoder", lambda name: FakeCrossEncoder())
+    res = resources(tmp_path, [gen(["B", "A"]), gen(["A", "B"])])
+    pq = ParsedQuery(semantic_query="ice maker", category="Ice Makers")
+    res.cfg = {**CFG, "retrieval": {**CFG["retrieval"], "rerank": {"model": "fake", "top_k": 30, "weight": 1.0}}}
+    out = respond("ice maker", res, parsed=pq)
+    assert out.ranked["product_id"].tolist()[0] == "B"
+    assert out.ranked.set_index("product_id").loc["A", "cosine"] == pytest.approx(1.0)   # true cosine kept
+    res.cfg = CFG                                                                         # off by default
+    assert respond("ice maker", res, parsed=pq).ranked["product_id"].tolist()[0] == "A"

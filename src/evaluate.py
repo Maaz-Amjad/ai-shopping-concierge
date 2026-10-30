@@ -840,6 +840,80 @@ def run_hybrid(cfg: dict, split: str = "dev", completed: bool = False) -> pd.Dat
     return out
 
 
+RERANK_MODEL = "BAAI/bge-reranker-base"   # Phase 13.9 (Maaz 30 Oct)
+RERANK_K = 30
+RERANK_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)  # pre-registered: cross-encoder share of the top-K order
+
+
+def rerank_order(rows: np.ndarray, dense: np.ndarray, ce: np.ndarray, b: float) -> np.ndarray:
+    """Order of the top-K rows by (1 - b) * minmax(dense) + b * minmax(cross-encoder); ties keep the dense order."""
+    from src.retrieve import hybrid_scores
+
+    score = hybrid_scores(dense, ce, b)
+    return rows[np.lexsort((np.arange(len(rows)), -score))]
+
+
+def run_rerank(cfg: dict, split: str = "dev") -> pd.DataFrame:
+    """Phase 13.9: re-score the top 30 of S5 with a cross-encoder at each blend b; judged-only and plain NDCG@10,
+    paired with b = 0 (= S5), unjudged share, and the cross-encoder's CPU time per query."""
+    from sentence_transformers import CrossEncoder
+
+    from src.data import load_catalog
+    from src.embed import encode_query, load_embeddings, load_model, use_query_instruction
+    from src.retrieve import DenseIndex, retrieve
+
+    queries = load_queries()
+    part = queries[queries["split"] == split]
+    p_by_id = load_parsed().set_index("query_id")
+    catalog = load_catalog()
+    embeddings, _ = load_embeddings()
+    index, model = DenseIndex(embeddings), load_model(cfg["embedding"]["model"])
+    prefix, r = use_query_instruction(cfg), cfg["retrieval"]
+    ce = CrossEncoder(RERANK_MODEL, max_length=512)
+    texts = catalog["product_text"].str[:1000].tolist()
+    rows_out, seconds = [], []
+    for _, q in part.iterrows():
+        pq = to_parsed_query(p_by_id.loc[q["query_id"]])
+        qvec = encode_query(pq.semantic_query, model, use_instruction=prefix)
+        pool = retrieve(pq, "filter_first", r["pool_size"], catalog=catalog, index=index, query_vec=qvec,
+                        n=CONDENSE_DEPTH, use_exclusions=False).candidates
+        if pool.empty:
+            continue
+        top, rest = pool.head(RERANK_K), pool.iloc[RERANK_K:]
+        t = time.perf_counter()
+        ce_scores = np.asarray(ce.predict([(pq.semantic_query, texts[i]) for i in top["row"]], batch_size=RERANK_K))
+        seconds.append(time.perf_counter() - t)
+        for b in RERANK_GRID:
+            order = np.concatenate([rerank_order(top["row"].to_numpy(), top["score"].to_numpy(), ce_scores, b),
+                                    rest["row"].to_numpy()])
+            for rank, row in enumerate(order[:CONDENSE_DEPTH], start=1):
+                rows_out.append({"query_id": q["query_id"], "system": f"S5r|{b:g}", "rank": rank,
+                                 "product_id": catalog["product_id"].iat[int(row)], "score": float(-rank)})
+    runs = pd.DataFrame(rows_out)
+    qrels = load_qrels()
+    qrels = qrels[qrels["query_id"].isin(part["query_id"])]
+    plain = ranking_metrics(runs, qrels, ks=(10,)).set_index(["system", "query_id"])["NDCG@10"]
+    judged = ranking_metrics(judged_only(runs, qrels), qrels, ks=(10,)).set_index(["system", "query_id"])["NDCG@10"]
+    unjudged = unjudged_share(runs, qrels)
+    base_j, base_p = judged.loc["S5r|0"], plain.loc["S5r|0"]
+    out = []
+    for b in RERANK_GRID:
+        label = f"S5r|{b:g}"
+        j, p = judged.loc[label], plain.loc[label]
+        mean, lo, hi = paired_bootstrap(base_j.tolist(), j.reindex(base_j.index).tolist())
+        out.append({"b": b, "queries": len(j), "ndcg10_judged_only": j.mean(), "ndcg10": p.mean(),
+                    "vs_s5": mean, "vs_s5_lo": lo, "vs_s5_hi": hi,
+                    "vs_s5_plain": paired_bootstrap(base_p.tolist(), p.reindex(base_p.index).tolist())[0],
+                    "unjudged@10": float(unjudged.get(label, np.nan)),
+                    "ce_seconds_median": float(np.median(seconds)), "ce_seconds_p95": float(np.percentile(seconds, 95))})
+    out = pd.DataFrame(out)
+    out.to_csv(RESULTS_DIR / f"rerank_{split}.csv", index=False)
+    print(f"{split}: {len(part)} queries; cross-encoder on the top {RERANK_K}: median {np.median(seconds):.1f} s, "
+          f"p95 {np.percentile(seconds, 95):.1f} s per query (CPU)")
+    print(out.drop(columns=["ce_seconds_median", "ce_seconds_p95"]).round(4).to_string(index=False))
+    return out
+
+
 def run_qrels() -> None:
     """Agreement on the verified sample, then eval/qrels.csv (human grade wins).
 
@@ -1071,7 +1145,7 @@ def run_report(cfg: dict, split: str = "test") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "judge-extra", "report"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "rerank", "judge-extra", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -1108,6 +1182,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "hybrid":
         run_hybrid(cfg, args.split, args.completed)
+        return
+    if args.action == "rerank":
+        run_rerank(cfg, args.split)
         return
     if args.action == "prefix":
         run_prefix(cfg)

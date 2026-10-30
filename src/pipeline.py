@@ -111,6 +111,9 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     result = retrieve(parsed, "filter_first", r["pool_size"], catalog=res.catalog, index=res.index, query_vec=qvec,
                       n=n, k0=r["k0"], k_max=r["k_max"], use_exclusions=use_exclusions, lexical_scores=lexical,
                       alpha=alpha)
+    rr = r.get("rerank") or {}
+    if rr.get("weight") and not result.candidates.empty:   # optional cross-encoder (13.9; off by default: slow on CPU)
+        result.candidates = rerank_candidates(result.candidates, parsed.semantic_query, res.catalog, rr)
     timings["retrieve"] = (time.perf_counter() - t) * 1000
 
     t = time.perf_counter()
@@ -158,6 +161,39 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     timings["total"] = sum(timings.values())
     flags.update(generation_fallback=answer.fallback, grounding_errors=answer.errors)
     return PipelineResult(parsed, result.candidates, ranked, answer, timings, flags)
+
+
+_cross_encoders: dict[str, Any] = {}
+
+
+def cross_encoder(name: str) -> Any:
+    """Load a cross-encoder once per process (sentence-transformers CrossEncoder)."""
+    if name not in _cross_encoders:
+        from sentence_transformers import CrossEncoder
+
+        _cross_encoders[name] = CrossEncoder(name, max_length=512)
+    return _cross_encoders[name]
+
+
+def rerank_candidates(cands: pd.DataFrame, query: str, catalog: pd.DataFrame, rr: dict) -> pd.DataFrame:
+    """Phase 13.9: re-order the top `top_k` candidates by (1 - weight) * dense + weight * cross-encoder (both min-max
+    normalized); the rest stay below them in their order. The true cosine is kept for explanations."""
+    from src.retrieve import hybrid_scores
+
+    k = int(rr.get("top_k", 30))
+    top, rest = cands.head(k).copy(), cands.iloc[k:].copy()
+    text_col = catalog["product_text"] if "product_text" in catalog else catalog["title"]
+    texts = text_col.astype(str).str[:1000].to_numpy()[top["row"].to_numpy()]
+    ce = np.asarray(cross_encoder(rr.get("model", "BAAI/bge-reranker-base")).predict(
+        [(query, t) for t in texts], batch_size=k), dtype=np.float64)
+    if "cosine" not in top:
+        top["cosine"], rest["cosine"] = top["score"], rest["score"]
+    top["score"] = hybrid_scores(top["score"].to_numpy(dtype=np.float64), ce, float(rr["weight"]))
+    top = top.sort_values("score", ascending=False, kind="mergesort")
+    rest["score"] = top["score"].min() - 1.0 - np.arange(len(rest)) * 1e-6     # stays below the re-scored top
+    out = pd.concat([top, rest], ignore_index=True)
+    out["rank"] = np.arange(1, len(out) + 1)
+    return out
 
 
 PRODUCT_FIELDS = ["product_id", "title", "brand", "category", "price"]

@@ -38,6 +38,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.037 [-0.017, +0.104] after judging every new product (indicative); part-number query 0.60 -> 1.00; used by the app |
 | 13.6 Faster replies: products first, answer when validated | done: `/search/stream`, `/chat/stream`; the widget shows products before the summary |
 | 13.8 Feedback loop: shopper events feed popularity | done: `POST /events`, owner-only `GET /events/summary`; imported stores rank by what shoppers do |
+| 13.9 Cross-encoder re-ranker (bge-reranker-base) | evaluated, off by default: dev +0.009, test -0.012 [-0.038, +0.010]; ~13-17 s per query on CPU |
 
 ## Systems compared (from the [technical spec](docs/tech_spec.md))
 
