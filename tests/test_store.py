@@ -779,3 +779,37 @@ def test_summary_needs_a_separate_owner_key(tmp_path, monkeypatch):
         {"webhook_secret": "w" * 40, "api_key": "k" * 40}))           # created before admin keys existed
     assert len(store.store_secrets("shop")["admin_key"]) >= 32           # added, others kept
     assert store.store_secrets("shop")["api_key"] == "k" * 40
+
+
+
+# ---- verifier findings, final Phase 13 batch --------------------------------------------------------------
+
+def test_compaction_leaves_room_and_drops_shown_events_first(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(store, "MAX_EVENT_BYTES", 4000)
+    store.record_events("shop", "buyer", [{"type": "buy", "product_id": "a"}])          # oldest line is a buy
+    runs = []
+    real = store._compact
+    monkeypatch.setattr(store, "_compact", lambda name: runs.append(1) or real(name))
+    for i in range(200):
+        store.record_events("shop", f"v{i}", [{"type": "shown", "product_id": "b"}])
+    assert len(runs) <= 10                                             # not on every write
+    assert store.event_popularity("shop").get("a") == 5                # the buy survives; shown lines go first
+
+
+def test_compaction_failure_does_not_break_recording(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(store, "MAX_EVENT_BYTES", 300)
+    monkeypatch.setattr(store.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError("in use")))
+    for i in range(10):
+        assert store.record_events("shop", f"v{i}", [{"type": "click", "product_id": "a"}]) == 1
+    assert not list((tmp_path / "stores" / "shop").glob("*.tmp"))       # no temp file left behind
+
+
+def test_import_compacts_old_events(tmp_path, monkeypatch):
+    cfg = events_store(tmp_path, monkeypatch)
+    path = tmp_path / "stores" / "shop" / "events.jsonl"
+    path.write_text(json.dumps({"ts": "2020-01-01T00:00:00", "client": "z", "type": "buy", "product_id": "a"}) + "\n")
+    feed = pd.DataFrame({"product_id": ["a"], "title": ["Kettle"]})
+    store.build_store_from_feed("shop", feed, "generic", model=FakeModel(), cfg=cfg, source="upload")
+    assert path.read_text() == ""                                      # deleted, not just ignored

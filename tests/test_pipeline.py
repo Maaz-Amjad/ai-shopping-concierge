@@ -217,3 +217,25 @@ def test_optional_cross_encoder_reorders_the_top_candidates(tmp_path, monkeypatc
     assert out.ranked.set_index("product_id").loc["A", "cosine"] == pytest.approx(1.0)   # true cosine kept
     res.cfg = CFG                                                                         # off by default
     assert respond("ice maker", res, parsed=pq).ranked["product_id"].tolist()[0] == "A"
+
+
+
+def test_cross_encoder_keeps_the_rest_below_and_falls_back_when_it_cannot_load(tmp_path, monkeypatch):
+    from src import pipeline
+
+    class Fake:
+        def predict(self, pairs, batch_size=32):
+            return [0.0] * len(pairs)
+
+    cands = pd.DataFrame({"row": [0, 1, 2], "score": [0.9, 0.8, 0.1], "rank": [1, 2, 3]})
+    catalog = pd.DataFrame({"title": ["a", "b", "c"]})
+    monkeypatch.setattr(pipeline, "cross_encoder", lambda name: Fake())
+    out = pipeline.rerank_candidates(cands, "q", catalog, {"top_k": 2, "weight": 1.0})
+    assert out["row"].tolist() == [0, 1, 2] and out["score"].iloc[2] < out["score"].iloc[:2].min()
+
+    def broken(name):
+        raise OSError("model not found")
+
+    monkeypatch.setattr(pipeline, "cross_encoder", broken)
+    same = pipeline.rerank_candidates(cands, "q", catalog, {"top_k": 2, "weight": 1.0})
+    assert same["row"].tolist() == [0, 1, 2] and same["score"].tolist() == [0.9, 0.8, 0.1]   # dense order kept

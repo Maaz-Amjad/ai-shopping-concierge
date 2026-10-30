@@ -425,3 +425,9 @@ def test_widget_events_privacy_and_restores(client):
     assert "doNotTrack" in js and 'data-track' in js                     # opt-out
     assert "CLIENT_DAYS" in js                                           # the browser id is renewed
     assert "early: true" in js and "!data.early" in js                   # final results tracked in every mode
+
+
+
+def test_widget_replaces_an_unreadable_saved_id(client):
+    js = client.get("/widget.js").text
+    assert 'try { saved = JSON.parse(localStorage.getItem("cw-client")' in js       # an old plain id is replaced
