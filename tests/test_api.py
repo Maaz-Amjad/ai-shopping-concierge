@@ -394,7 +394,7 @@ def test_events_are_recorded_and_the_summary_needs_the_store_key(tmp_path, monke
     assert client.post("/events", json={**body, "store": "missing"}).status_code == 404
     assert client.post("/events", json={**body, "client_id": "x" * 500}).status_code == 422
     assert client.get("/events/summary", params={"store": "shop"}).status_code == 401
-    key = store.store_secrets("shop")["api_key"]
+    key = store.store_secrets("shop")["admin_key"]                  # owner key, not the public widget key
     summary = client.get("/events/summary", params={"store": "shop"}, headers={"X-API-Key": key}).json()
     assert summary["counts"]["click"] == 1
 

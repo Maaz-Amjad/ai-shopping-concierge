@@ -412,8 +412,8 @@ def create_app(loader: Callable[[str | None], Resources] | None = None,
     @app.get("/events/summary")
     def events_summary(store: str, days: int = Query(30, ge=1, le=365),
                        x_api_key: str | None = Header(None)) -> dict:
-        """For the store owner only: the store's API key is always required (stores/<name>/secrets.json)."""
-        expected = (store_mod.read_secrets(store) or {}).get("api_key")
+        """For the store owner only: the store's admin key (not the public widget key) is always required."""
+        expected = (store_mod.read_secrets(store) or {}).get("admin_key")
         if not expected or not x_api_key or not hmac.compare_digest(x_api_key.encode(), expected.encode()):
             raise HTTPException(401, "missing or wrong API key (X-API-Key header)")
         return store_mod.event_summary(store, days)

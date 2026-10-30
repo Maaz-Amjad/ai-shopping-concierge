@@ -140,8 +140,11 @@ because Docker is not installed on the development machine); put an HTTPS revers
 a random per-browser id, no query text, no IP). For an imported store, popularity becomes buy 5 + save 3 + click 1
 points (each browser counted once per product, action and day, over the last year); it is applied on every import,
 refresh and webhook update, or with `python -m src.store --name mystore --update-popularity` (nothing is re-embedded).
-`GET /events/summary?store=mystore` (always needs the store's API key) and `--events-summary` give the last 30 days:
-counts, shoppers, click, save and Buy-click rates, top products. The demo catalog keeps its Amazon popularity.
+`GET /events/summary?store=mystore` (always needs the store's owner `admin_key` from `--secrets`, not the public
+widget key) and `--events-summary` give the last 30 days: counts, shoppers, click, save and Buy-click rates, top
+products. Privacy: the browser id is random and renewed every 30 days; tracking is off with Do Not Track or
+`data-track="off"` on the script tag; events older than a year are deleted, repeats are collapsed and the file is
+capped at 20 MB; days are UTC. The demo catalog keeps its Amazon popularity.
 
 **Instant updates (webhooks).** `POST /webhooks/<store>/shopify` and `/webhooks/<store>/woocommerce` accept product
 create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update

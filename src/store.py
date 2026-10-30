@@ -602,8 +602,10 @@ def apply_store_changes(name: str, feed: pd.DataFrame | None = None, delete_ids:
 
 EVENT_WEIGHTS = {"buy": 5, "save": 3, "click": 1, "shown": 0}   # popularity points per browser, product and day
 MAX_EVENTS = 50                                                  # kept per request
-EVENT_DAYS = 365                                                 # events older than this are ignored
+EVENT_DAYS = 365                                                 # events older than this are deleted
+MAX_EVENT_BYTES = 20 * 1024 * 1024                               # events.jsonl is compacted beyond this
 _known: dict[str, tuple[float, set]] = {}
+_pop_cache: dict[tuple, pd.Series] = {}
 
 
 def _known_ids(name: str) -> set:
@@ -624,13 +626,43 @@ def record_events(name: str, client_id: str, events: list) -> int:
     client = re.sub(r"[^A-Za-z0-9_-]", "", str(client_id))[:64] or "anonymous"
     ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
     rows = [{"ts": ts, "client": client, "type": e["type"], "product_id": e["product_id"]}
-            for e in list(events)[:4 * MAX_EVENTS] if isinstance(e, dict) and e.get("type") in EVENT_WEIGHTS
-            and isinstance(e.get("product_id"), str) and e["product_id"] in known][:MAX_EVENTS]
+            for e in list(events)[:4 * MAX_EVENTS] if isinstance(e, dict) and isinstance(e.get("type"), str)
+            and e["type"] in EVENT_WEIGHTS and isinstance(e.get("product_id"), str) and e["product_id"] in known
+            ][:MAX_EVENTS]
     if rows:
+        path = STORES_DIR / name / "events.jsonl"
         with _store_locks[f"{name}:events"]:
-            with open(STORES_DIR / name / "events.jsonl", "a", encoding="utf-8") as f:
+            with open(path, "a", encoding="utf-8") as f:
                 f.write("".join(json.dumps(r) + "\n" for r in rows))
+            if path.stat().st_size > MAX_EVENT_BYTES:
+                _compact(name)
     return len(rows)
+
+
+def _compact(name: str) -> None:
+    """Rewrite events.jsonl: drop events older than EVENT_DAYS, keep one per (browser, action, product, day), and
+    if it is still over MAX_EVENT_BYTES keep only the newest that fit (call with the events lock held)."""
+    path = STORES_DIR / name / "events.jsonl"
+    df = _read_events(name, EVENT_DAYS)
+    df = df.assign(day=df["ts"].str[:10]).drop_duplicates(["client", "type", "product_id", "day"]).drop(columns="day")
+    lines = [json.dumps(r) + "\n" for r in df.to_dict("records")]
+    kept, size = [], 0
+    for line in reversed(lines):                          # newest first, until the size budget is used
+        size += len(line.encode())
+        if size > MAX_EVENT_BYTES:
+            break
+        kept.append(line)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text("".join(reversed(kept)), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def compact_events(name: str) -> None:
+    """Retention and size limit for a store's events (also run by --update-popularity)."""
+    check_store_name(name)
+    if (STORES_DIR / name / "events.jsonl").exists():
+        with _store_locks[f"{name}:events"]:
+            _compact(name)
 
 
 def _read_events(name: str, days: int) -> pd.DataFrame:
@@ -660,8 +692,16 @@ def _scores(df: pd.DataFrame) -> pd.Series:
 
 
 def event_popularity(name: str, days: int = EVENT_DAYS) -> pd.Series:
-    """Popularity for an imported store: buy 5, save 3, click 1 points (shown 0), per browser and day."""
-    return _scores(_read_events(name, days))
+    """Popularity for an imported store: buy 5, save 3, click 1 points (shown 0), per browser and UTC day.
+    Cached until the events file changes, so imports, refreshes and webhooks do not re-read it."""
+    path = STORES_DIR / name / "events.jsonl"
+    stat = path.stat() if path.exists() else None
+    key = (name, days, stat.st_mtime_ns if stat else 0, stat.st_size if stat else 0)
+    if key not in _pop_cache:
+        for old in [k for k in _pop_cache if k[:2] == key[:2]]:
+            del _pop_cache[old]
+        _pop_cache[key] = _scores(_read_events(name, days))
+    return _pop_cache[key]
 
 
 def update_popularity(name: str, model: Any = None, cfg: dict | None = None) -> dict:
@@ -670,6 +710,7 @@ def update_popularity(name: str, model: Any = None, cfg: dict | None = None) -> 
     out = STORES_DIR / name
     if not (out / "catalog.pkl").exists():
         raise ValueError(f"no store {name!r}; import it first")
+    compact_events(name)
     with store_lock(name):
         log = json.loads((out / "import_log.json").read_text(encoding="utf-8"))
         return write_store(name, pd.read_pickle(out / "catalog.pkl"), log, model, cfg)
@@ -699,18 +740,20 @@ def read_secrets(name: str) -> dict | None:
 
 
 def store_secrets(name: str) -> dict:
-    """The store's webhook secret and API key (stores/<name>/secrets.json, created on first use, never committed)."""
+    """The store's webhook secret, public API key (the widget's data-key) and owner-only admin key for the events
+    summary (stores/<name>/secrets.json, created on first use; missing keys are added; never committed)."""
     check_store_name(name)
     out = STORES_DIR / name
     if not (out / "catalog.pkl").exists():
         raise ValueError(f"no store {name!r}; import it first")
     path = out / "secrets.json"
     with _store_locks[f"{name}:secrets"]:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        values = {"webhook_secret": secrets.token_urlsafe(32), "api_key": secrets.token_urlsafe(32)}
-        path.write_text(json.dumps(values), encoding="utf-8")
-        os.chmod(path, 0o600)                              # owner only (on Linux/macOS)
+        values = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        missing = [k for k in ("webhook_secret", "api_key", "admin_key") if not values.get(k)]
+        if missing:
+            values.update({k: secrets.token_urlsafe(32) for k in missing})
+            path.write_text(json.dumps(values), encoding="utf-8")
+            os.chmod(path, 0o600)                          # owner only (on Linux/macOS)
         return values
 
 

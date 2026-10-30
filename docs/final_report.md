@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 293 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 299 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -401,10 +401,12 @@ Popularity came from the Amazon interaction data, which an imported store does n
 widget now reports products shown, clicks, saves and Buy clicks, with only the product, the action, a random
 per-browser id and the server's time (no query text, no IP address). An imported store's popularity becomes buy 5 +
 save 3 + click 1 points, each browser counted once per product, action and day (so one visitor cannot inflate it),
-over the last year; it is applied on every import, refresh and webhook update without re-embedding anything (0.3 s
-for the 300-product sample with simulated events). The store owner can read a 30-day summary (counts, shoppers,
-click, save and Buy-click rates, top products) with the store's API key; this is the data source for the planned
-dashboard. Caveats: the weights are a reasonable default, not tuned (there is no outcome data to tune them on), and a
+over the last year (UTC days); it is applied on every import, refresh and webhook update without re-embedding
+anything (a one-off check on a copy of the 300-product sample with simulated events took 0.3 s). The store owner can
+read a 30-day summary (counts, shoppers, click, save and Buy-click rates, top products) with a separate owner key, not
+the widget's public key; this is the data source for the planned dashboard. Privacy: the browser id is random and
+renewed every 30 days, tracking is off under Do Not Track or `data-track="off"`, events older than a year are deleted,
+repeats are collapsed and the file is capped at 20 MB. Caveats: the weights are a reasonable default, not tuned (there is no outcome data to tune them on), and a
 determined bot with many browser ids could still inflate popularity; the rate limit only slows it. The benchmark
 catalog keeps its original popularity, so no reported result changes.
 

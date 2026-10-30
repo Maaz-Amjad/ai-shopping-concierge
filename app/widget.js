@@ -87,16 +87,20 @@
   }
 
   // Phase 13.8: what shoppers do (shown / click / save / buy) feeds the store's popularity. A random id per browser,
-  // never the query text. Fire-and-forget: failures are ignored.
+  // renewed every CLIENT_DAYS, never the query text; off with Do Not Track or data-track="off". Failures are ignored.
+  var CLIENT_DAYS = 30;
+  var tracking = script.getAttribute("data-track") !== "off" && navigator.doNotTrack !== "1";
   var clientId = (function () {
     try {
-      var id = localStorage.getItem("cw-client");
-      if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("cw-client", id); }
+      var saved = JSON.parse(localStorage.getItem("cw-client") || "null");
+      if (saved && saved.id && Date.now() - saved.t < CLIENT_DAYS * 864e5) return saved.id;
+      var id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem("cw-client", JSON.stringify({id: id, t: Date.now()}));
       return id;
     } catch (e) { return "anonymous"; }
   })();
   function track(type, ids) {
-    if (!store || !ids || !ids.length) return;
+    if (!tracking || !store || !ids || !ids.length) return;
     try {
       fetch(api + "/events", {method: "POST", headers: headers, keepalive: true, body: JSON.stringify(
         {store: store, client_id: clientId, events: ids.slice(0, 50).map(function (id) { return {type: type, product_id: id}; })})
@@ -265,7 +269,7 @@
     });
     close.addEventListener("click", function () { panel.classList.remove("open"); });
 
-    if (log.length) log.forEach(show);
+    if (log.length) log.forEach(function (entry) { show(entry); });   // restored: not reported again
     else show({bot: {text: "Hi! Tell me what you're shopping for, and I'll find it, compare options and save favourites."}});
     return;
   }
@@ -283,7 +287,7 @@
 
 
   function render(data) {
-    if (data.type === "answer") track("shown", (data.products || []).map(function (p) { return p.product_id; }));
+    if (!data.early) track("shown", (data.products || []).map(function (p) { return p.product_id; }));
     out.textContent = "";
     var pq = data.parsed || {};
     var chips = el("div", "cw-chips");
@@ -315,7 +319,8 @@
     out.textContent = "";
     out.appendChild(el("div", "cw-meta", "Searching…"));
     streamJson("/search/stream", {query: q, store: store, user_id: user, n: n}, function (e) {
-      if (e.type === "products") render({parsed: e.parsed, products: e.products, answer: "Writing a short summary…"});
+      if (e.type === "products") render({early: true, parsed: e.parsed, products: e.products,
+                                         answer: "Writing a short summary…"});
     }).then(render).catch(function (e) {
       out.textContent = "";
       out.appendChild(el("div", "cw-error", "Search failed: " + e.message));
