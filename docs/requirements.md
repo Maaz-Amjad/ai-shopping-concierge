@@ -236,7 +236,7 @@ Priority uses MoSCoW: **M** Must, **S** Should, **C** Could.
 
 ## 14. Addendum: approved scope changes (27–30 October 2026)
 
-The sections above are the requirements as approved before the build. The changes below were approved by the author
+The sections above are the requirements as approved before the build. The changes below were decided
 during the build, after the core evaluation (sections 7.7 and 10) was complete; none of them changes the reported
 benchmark, which keeps the evaluated configuration. Results are in the [final report](final_report.md), sections 11–12.
 
