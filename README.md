@@ -1,230 +1,505 @@
-# Semantic Product Discovery & Shopping Concierge
+<div align="center">
 
-Keyword search misses products described in different words, does not reliably enforce limits like
-"under $80", and rarely explains its picks. This project builds and evaluates an end-to-end pipeline
-over one Amazon product catalog:
+# 🛒 AI Shopping Concierge
+
+### Semantic Product Discovery, Personalized Recommendation & a Conversational Shopping Assistant
+
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.162-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.66-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Gemini](https://img.shields.io/badge/LLM-Gemini%20%7C%20OpenAI%20%7C%20Claude-4285F4?logo=google&logoColor=white)](#-configuration-reference)
+[![Embeddings](https://img.shields.io/badge/Embeddings-BGE--small-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/BAAI/bge-small-en-v1.5)
+[![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](#-mcp-server-for-ai-agents)
+[![Tests](https://img.shields.io/badge/tests-305%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
+
+*Ask for "a quiet countertop ice maker under $150" and get products that really are under $150, ranked for you,
+explained only with facts from the catalog.*
+
+*atomcamp AI Bootcamp final project (NLP/LLM track) by Maaz Amjad, October 2026*
+
+[Why](#-why-this-exists) · [Architecture](#-architecture) · [Results](#-results) · [Docs & notebooks](#-documentation--notebooks) ·
+[Quick start](#-quick-start) · [Store integration](#-plug-into-a-real-store) · [API](#-api-reference) ·
+[Project structure](#-project-structure) · [Testing](#-testing) · [Deployment](#-deployment)
+
+</div>
+
+---
+
+## 💡 Why This Exists
+
+Keyword search misses products described in other words, similarity search alone does not enforce limits such as
+"under $80", and neither adapts to the shopper or explains its picks.
 
 ```
-query -> LLM query parsing (Gemini) -> catalog-validated hard filters (Python)
-      -> BGE embeddings, filter-first retrieval -> personalized re-ranking
-      -> grounded LLM answer + deterministic grounding validator
+Keyword search:   "breathable jacket for rainy weather under $80"  ->  matches "jacket", ignores the budget
+This concierge:   LLM extracts {max_price: 80}, Python enforces it, embeddings rank by meaning,
+                  the answer quotes only catalog fields and is checked before it is shown
 ```
 
-**Core rule:** the LLM *extracts* constraints; Python *enforces* them. The LLM never filters or ranks products.
+**Core rule: the LLM *extracts*, Python *enforces*.** The LLM never filters, ranks, or decides which products exist.
 
-## Status
+| Decision | Alternative | Why |
+|---|---|---|
+| LLM parses limits, Python applies them | Let the LLM pick products | Hard limits are guaranteed (100 % adherence on test), and invalid categories or brands are dropped, never guessed |
+| Filter first, then semantic search inside the allowed products | Search first, filter after | Never runs short of results under tight limits; same quality, cheaper |
+| Deterministic grounding validator on every answer | Trust the LLM | 0 invented product IDs; wrong prices or brands trigger one retry, then a template answer |
+| Everything cached, seed 42, temperature 0 | Live calls | Every reported table regenerates without LLM calls |
+| Production settings kept apart from the evaluated ones | One config | Improvements never silently change the reported benchmark |
 
-Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be summarized in the final report.
+---
 
-| Phase | State |
-|---|---|
-| 0 Plan ([intent](intent/intent.md)) | done |
-| 1 Scaffold, shared LLM client, guardrails | done |
-| 2 Data: `src/data.py`, [01_eda](notebooks/01_eda.ipynb) | done: 10,000 products, 24 categories, 24% without price |
-| 3 Embeddings + baselines: `src/embed.py`, `src/retrieve.py`, [02_baselines](notebooks/02_baselines.ipynb) | done: S1 TF-IDF, S2 BM25, S3 dense; S4/S5 primitives |
-| 4 Query parsing + hard filters: `src/parse.py`, `src/filters.py` | done: Gemini parser (prompt v2, tuned on dev), S4 post-filter and S5 filter-first |
-| 5 Evaluation harness: `src/evaluate.py` | done: metrics with bootstrap CIs; S1-S5 run on all 25 queries; dev parse F1 0.80 (prompt v1) -> 1.00 (v2) |
-| 6 Relevance labels: LLM judge + manual check | done: 659 pooled pairs judged (Gemini 3.8 Flash); 167 (25%) human-verified, agreement 81% exact / 92% relevant-vs-not |
-| 7 Personalization: `src/personalize.py` | done: user profiles, weighted re-ranking, cold start; next-item test (3,995 users) HitRate@10 blend 0.063 vs popularity 0.028 vs random 0.002 |
-| 8 Grounded answers: `src/generate.py`, `src/pipeline.py` | done: grounding validator + one regeneration + template fallback; 22/22 answers grounded (21 first try) |
-| 9 Test-set evaluation: [04_evaluation](notebooks/04_evaluation.ipynb) | done |
-| 10 [Final report](docs/final_report.md) | done |
-| 11 Demo app, store connector (API + widget), MCP server: `app/`, `src/store.py` | done |
-| 12 Shopping chat agent (`src/agent.py`), website chat bubble, any LLM provider (`src/llm.py`) | done |
-| 13 Production improvements: star ratings in ranking (13.1) | done: test effect on relevance neutral, used by the app |
-| 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
-| 13.3 Smaller personal weight for requests with limits | done, kept off: dev chose no change, test disagreed (report 12.3) |
-| 13.4 API hardening, store webhooks, Dockerfile | done: rate limits, optional API keys, request log, signed Shopify/WooCommerce webhooks |
-| 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.037 [-0.017, +0.104] after judging every new product (indicative); part-number query 0.60 -> 1.00; used by the app |
-| 13.6 Faster replies: products first, answer when validated | done: `/search/stream`, `/chat/stream`; the widget shows products before the summary |
-| 13.7 Stated-category parser rule | tried and reverted: too literal for the catalog's category names (report 12.7) |
-| 13.8 Feedback loop: shopper events feed popularity | done: `POST /events`, owner-only `GET /events/summary`; imported stores rank by what shoppers do |
-| 13.9 Cross-encoder re-ranker (bge-reranker-base) | evaluated, off by default: dev +0.009, test -0.012 [-0.038, +0.010]; ~13-17 s per query on CPU |
+## 🏗 Architecture
 
-## Systems compared (from the [technical spec](docs/tech_spec.md))
+### System overview
 
-| ID | System |
-|---|---|
-| S1 | TF-IDF, raw query |
-| S2 | BM25, raw query |
-| S3 | Dense BGE + FAISS, no filters |
-| S4 | Dense + post-filter (approved proposal design) |
-| S5 | Dense + filter-first |
-| S5x | S5 + exclusion terms ("not stainless"), reported separately |
-| S6 | S5 + personalization |
+```
+                        ┌──────────────────────────── shopper ────────────────────────────┐
+                        │  Streamlit app  ·  website chat bubble  ·  REST API  ·  MCP tools │
+                        └───────────────────────────────┬──────────────────────────────────┘
+                                                        │ request (+ optional shopper id)
+┌───────────────────────────────────────────────────────▼───────────────────────────────────────────┐
+│ 1 Query understanding   src/parse.py      LLM -> {semantic query, price, category, brand, "not X"} │
+│ 2 Hard filters          src/filters.py    price · category · brand · exclusions · stock  (Python)  │
+│ 3 Retrieval             src/retrieve.py   BGE embeddings, filter-first  (+ BM25 hybrid in the app) │
+│ 4 Ranking               src/personalize.py semantic + personal + popularity (+ ratings in the app)  │
+│ 5 Grounded answer       src/generate.py   structured LLM output -> validator -> text / template    │
+│ ↺ Chat agent            src/agent.py      LLM picks one action (search, compare, save, buy...);    │
+│                                           Python validates the arguments and runs it               │
+└───────────────────────────────────────────────────────────────────────────────────────────────────┘
+   src/llm.py: one client for every LLM call (Gemini, OpenAI-compatible, Claude): cache · rate limit ·
+   retries · call cap · call log          src/store.py: imports, stock, webhooks, refresh, shopper events
+```
 
-Metrics: Precision@K, pooled Recall@K, NDCG@K, constraint adherence, parse F1, grounding rate, latency,
-with 95% bootstrap confidence intervals.
+### Request flow: one chat turn
 
-## Results (15 held-out test queries; details in the [final report](docs/final_report.md))
+```
+Shopper           Widget / app        API (FastAPI)         Agent (Python)          LLM
+  │  "cheaper"        │                    │                     │                    │
+  │──────────────────>│  POST /chat/stream │                     │                    │
+  │                   │───────────────────>│  chat_turn(state)   │                    │
+  │                   │                    │────────────────────>│  forced tool call  │
+  │                   │                    │                     │───────────────────>│
+  │                   │                    │                     │<── search(max_price)│
+  │                   │                    │                     │ merge earlier limits│
+  │                   │                    │                     │ validate, filter,   │
+  │                   │   products first   │<── products event ──│ retrieve, rank      │
+  │  cards appear     │<───────────────────│                     │  generate answer   │
+  │                   │                    │                     │───────────────────>│
+  │                   │   validated answer │<── turn event ──────│<── grounded? ──────│
+  │  summary appears  │<───────────────────│                     │                    │
+```
+
+### Fallback chain
+
+```
+parser output invalid -> retry once -> semantic-only search
+answer fails validator -> regenerate once with the errors -> template answer from catalog fields
+tool call unusable / LLM call cap reached -> plain search, answer from catalog fields
+no product satisfies the limits -> say so and suggest which limit to relax (no LLM)
+```
+
+---
+
+## 🧭 Design Decisions
+
+**Filter-first instead of post-filter.** S4 (the proposal's post-filter) and S5 (filter-first) returned the same top
+10 on every test query. **Decision:** keep filter-first; it cannot run out of candidates and is cheaper.
+
+**Personalization measured honestly.** It predicts the next purchase far better than popularity (HitRate@10 6.3 % vs
+2.8 %) but slightly lowers relevance for stated requests (NDCG@10 −0.026). **Decision:** keep it, report both.
+
+**Products before the answer.** Generation dominates the wait (p95 12.7 s on the free tier) while retrieval takes
+11 ms. **Decision:** stream the ranked products first and the answer once it has passed the validator; answers are
+never streamed word by word, so unchecked text is never shown.
+
+**Separate production settings.** Ratings, hybrid retrieval and the optional re-ranker live under `app:` in
+`config.yaml`. **Decision:** the app gets the improvements; every benchmark table keeps the evaluated configuration.
+
+**Report negative results.** A parser rule, an adaptive personal weight and a cross-encoder re-ranker did not hold up
+on test. **Decision:** reverted or switched off, and documented in the [final report](docs/final_report.md).
+
+---
+
+## 📊 Results
+
+15 held-out test queries, never used for tuning. Full analysis, ablations and error analysis in the
+[final report](docs/final_report.md) and [04_evaluation](notebooks/04_evaluation.ipynb).
 
 | System | P@10 | NDCG@10 [95% CI] | Constraint adherence@10 |
 |---|---|---|---|
 | S1 TF-IDF | 0.46 | 0.40 [0.24, 0.58] | 0.43 |
 | S2 BM25 | 0.51 | 0.51 [0.33, 0.70] | 0.44 |
-| S3 dense | 0.67 | 0.65 [0.45, 0.82] | 0.63 |
-| S4 post-filter | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
-| S5 filter-first | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
-| S5x + exclusions | 0.81 | 0.75 [0.59, 0.90] | 1.00 |
+| S3 dense (BGE) | 0.67 | 0.65 [0.45, 0.82] | 0.63 |
+| S4 dense + post-filter | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
+| S5 dense + filter-first | 0.79 | 0.74 [0.57, 0.89] | 1.00 |
+| S5x + "not X" exclusions | 0.81 | 0.75 [0.59, 0.90] | 1.00 |
 | S6 personalized | 0.79 | 0.71 [0.55, 0.87] | 1.00 |
 
-- Query parsing F1 0.94 on test (target 0.85). Dense vs TF-IDF: +0.25 NDCG@10 [0.05, 0.48].
-- Filter-first and post-filter return the same top 10 on every test query (a neutral result); filter-first is cheaper.
-- Personalization: next-item HitRate@10 6.3% (blend) vs 2.8% (popularity); on query relevance it costs
-  -0.026 NDCG@10 [-0.044, -0.007] while precision@10 is unchanged: it ranks some relevant products lower.
-- Star ratings (Phase 13.1) as a fourth ranking term, weight 0.10 chosen on dev: test change in NDCG@10 -0.009
-  [-0.031, +0.009] for new shoppers, i.e. neutral (the labels grade fit to the request, not quality). Used by the app
-  only; the tables above use the spec weights.
-- Grounding: 22/22 answers grounded, 0 invented product IDs. Retrieval p95 11 ms; LLM generation p95 12.7 s (6 s
-  end-to-end target not met on the free tier).
+| Goal | Target | Result |
+|---|---|---|
+| G1 query understanding | parse F1 ≥ 0.85 | ✅ **0.94** |
+| G2 semantic retrieval | dense vs TF-IDF, with CIs | ✅ **+0.25** NDCG@10 [0.05, 0.48] |
+| G3 constraint enforcement | adherence ≥ 95 % | ✅ **100 %** |
+| G4 personalization | beat popularity on next item; no material relevance loss | ✅ 6.3 % vs 2.8 % · ⚠️ −0.026 NDCG@10 |
+| G5 grounded answers | 0 IDs outside the retrieved set | ✅ **0**; 22/22 answers grounded |
+| NFR-1 latency | retrieval p95 < 500 ms; end-to-end < 6 s | ✅ 11 ms · ❌ generation p95 12.7 s (free tier) |
 
-## Try it: demo app, chat assistant, store connector, MCP server
+### Production extensions (report section 12; each chosen on dev, reported once on test)
 
-After setup (below), the concierge can be used in four ways, all read-only and built on the same `src/pipeline.py`:
+| Extension | Test result | In the app |
+|---|---|---|
+| ⭐ Star ratings in ranking | neutral (−0.009 [−0.032, +0.008]) | on |
+| 📦 Stock awareness, incremental store refresh | sold-out products never recommended | on |
+| 👤 Smaller personal weight for specific requests | dev and test disagreed | off |
+| 🔐 Rate limits, API keys, signed store webhooks | replay and ordering guard, checked live | on |
+| 🔤 Hybrid keyword + semantic retrieval | +0.037 [−0.017, +0.104]; part-number query 0.60 → 1.00 | on |
+| ⚡ Products before the written answer | answers still validated first | on |
+| 🏷 Parser rule for unstated categories | dropped real category requests | reverted |
+| 📈 Shopper events feed popularity | privacy-limited; owner summary | on |
+| 🔁 Cross-encoder re-ranker (bge-reranker-base) | −0.012 [−0.038, +0.010]; 13–17 s per query on CPU | off |
 
-**Demo app (Streamlit), no commands needed after starting it.** The *Chat* tab is a shopping assistant: ask for
-products, then refine ("cheaper", "only GE", "not stainless"), compare ("compare 1 and 2"), find similar items, keep
-a shortlist, and get the product page to buy (no orders are placed). The *Shop* tab is single-shot search with the
-enforced limits, score components and the grounded answer. The *Add your store* tab imports a store, turns the website
-connection on and off, and connects Claude Desktop, all with buttons.
+---
+
+## 📚 Documentation & Notebooks
+
+| Document | What it contains |
+|---|---|
+| [📄 Requirements](docs/requirements.md) | Goals, success criteria, functional and non-functional requirements, scope |
+| [🛠 Technical specification](docs/tech_spec.md) | Architecture, data design, retrieval, ranking, grounding, evaluation design, interfaces |
+| [📊 Final report](docs/final_report.md) | Results, ablations, personalization experiments, error analysis, limitations, production extensions |
+| [📝 Proposal](docs/proposal.pdf) | The approved project proposal |
+| [🎯 Intent](intent/intent.md) | Problem, outcome, users and constraints (planning stage) |
+
+| Notebook | What it shows |
+|---|---|
+| [01 · EDA](notebooks/01_eda.ipynb) | The Amazon Appliances catalog: cleaning, price coverage, categories, brands, interactions |
+| [02 · Baselines](notebooks/02_baselines.ipynb) | TF-IDF, BM25 and dense retrieval side by side |
+| [03 · Pipeline](notebooks/03_pipeline.ipynb) | One request end to end: parsing, filters, retrieval, ranking, grounded answer |
+| [04 · Evaluation](notebooks/04_evaluation.ipynb) | S1–S6 with confidence intervals, personalization experiments, error analysis |
+
+Notebooks import from `src/` and run with an LLM call budget of zero (cached answers only):
+`.venv/Scripts/python.exe -m jupyter nbconvert --to notebook --execute --inplace notebooks/<name>.ipynb`.
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+| Requirement | Version / note | Needed for |
+|---|---|---|
+| Python | 3.12 (venv created with [uv](https://docs.astral.sh/uv/)) | everything |
+| Gemini API key | free tier works (`GEMINI_API_KEY` in `.env`) | new LLM calls (cached ones need none) |
+| Disk | ~2 GB (data, embeddings, models) | data and embeddings |
+| Docker | optional | container deployment |
+
+### Install and test
 
 ```bash
-.venv/Scripts/python.exe -m streamlit run app/streamlit_app.py
+uv venv --python 3.12 .venv
+uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Linux/macOS: .venv/bin/python
+cp .env.example .env                                                   # then add your key after GEMINI_API_KEY=
+.venv/Scripts/python.exe -m pytest -q                                  # 305 passed, no API calls
 ```
 
-**Plug into an existing store.** Import the store's product export (CSV or JSON, a file or a URL), start the API, and
-paste two lines into any page:
+### Get the data and build the index
+
+```bash
+B=https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main
+curl -L -o data/raw/meta_Appliances.jsonl "$B/raw/meta_categories/meta_Appliances.jsonl"          # 285 MB
+curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/Appliances.csv"   # 122 MB
+.venv/Scripts/python.exe -m src.data     # clean -> data/processed/ (+ eval/results/cleaning_log.json), ~20 s
+.venv/Scripts/python.exe -m src.embed    # embeddings -> artifacts/ (~27 min on CPU, minutes on a GPU)
+```
+
+### Run it
+
+```bash
+.venv/Scripts/python.exe -m streamlit run app/streamlit_app.py      # demo app: Chat, Shop, Add your store
+.venv/Scripts/python.exe -m uvicorn app.api:app --port 8000          # API + demo store page at http://localhost:8000/
+```
+
+The **Chat** tab is the shopping assistant: ask, refine ("cheaper", "only GE", "not stainless"), compare ("compare 1
+and 2"), find similar items, keep a shortlist and open the product page to buy (no orders are placed). **Shop** is
+single-shot search with the enforced limits, score components and the grounded answer. **Add your store** imports a
+store, turns the website connection on and off, keeps products up to date and connects Claude Desktop, all with
+buttons.
+
+---
+
+## 🏪 Plug Into a Real Store
+
+### Import products
 
 ```bash
 .venv/Scripts/python.exe -m src.store --name mystore --file products_export.csv --preset shopify
 .venv/Scripts/python.exe -m src.store --name mystore --file https://mystore.com/products.json --preset shopify_json
-.venv/Scripts/python.exe -m src.store --name mystore --file feed.csv --map title=Name,price=Cost   # any other format
-.venv/Scripts/python.exe -m uvicorn app.api:app --port 8000      # docs at http://localhost:8000/docs
+.venv/Scripts/python.exe -m src.store --name mystore --file feed.csv --map title=Name,price=Cost     # any format
 ```
+
+| Preset | Source | Stock read from |
+|---|---|---|
+| `shopify` | Admin "Export products" CSV | inventory quantity, "continue selling", untracked |
+| `shopify_json` | `https://<store>/products.json` | each variant's availability |
+| `woocommerce` | WooCommerce CSV export | "In stock?" and backorders |
+| `generic` | `product_id,title,brand,category,price,description,features` | an `in_stock` / `availability` column |
+
+Optional `rating` and `rating_count` columns are shown as stars and used in ranking. Out-of-stock products are never
+recommended; unknown stock counts as available.
+
+### Add the assistant to any page
 
 ```html
 <div id="concierge-widget"></div>
-<script src="http://localhost:8000/widget.js" data-store="mystore"></script>
+<script src="https://YOUR-API/widget.js" data-store="mystore"></script>
 ```
 
-This adds a floating chat bubble (the shopping assistant); add `data-mode="search"` for a plain search box instead.
+A floating chat bubble; add `data-mode="search"` for a search box, `data-key="..."` when API keys are required, and
+`data-track="off"` to disable shopper events. Add the store's domain to `app.allowed_origins` (or
+`CONCIERGE_ALLOWED_ORIGINS`).
 
-**Stock and updates.** Products marked out of stock are never recommended (search, similar products, chat); unknown
-stock counts as available. Stock is read from Shopify inventory columns (quantity, "continue selling", untracked),
-the Shopify store link (variant availability), WooCommerce "In stock?"/backorders, or an `in_stock`/`availability`
-column (`--map in_stock=...`). `python -m src.store --name mystore --refresh` re-reads a store from where it came
-from (file, feed URL or Shopify address) and re-embeds only products whose text changed; add `--every 60` to repeat
-hourly, or schedule it (Task Scheduler / cron). The app's *Add your store* tab has an *Update products now* button,
-and the API reloads a store as soon as it changes.
+### Keep products current
 
-Optional rating columns (`rating`/`average_rating` and `rating_count`/`review_count`, or `--map rating=...`) are
-read when present and shown as stars; a store without any ratings ranks exactly as with the spec weights. Presets: `shopify` (admin CSV export), `shopify_json` (`/products.json`), `woocommerce` (CSV export), `generic`
-(`product_id,title,brand,category,price,description,features`). API: `POST /search`, `POST /chat` (one chat turn; the
-client sends back the returned state), `POST /search/stream` and `POST /chat/stream` (the same, as newline-delimited
-JSON: the ranked products first, the validated answer when ready), `POST /chat/action` (card buttons, no LLM call), `GET /similar/{id}`,
-`GET /meta`, `GET /health`; `http://localhost:8000/` shows a demo store page with the widget. Imported stores live in
-`stores/` (not committed); their shoppers have no history, so personalization is off for them. Browsers may call the
-API only from origins listed in `config.yaml` (`app.allowed_origins`) or `CONCIERGE_ALLOWED_ORIGINS`
-(comma-separated), so add your store's domain there. Each server process makes at most `app.max_llm_calls` LLM
-calls (default 300), then answers from catalog fields only.
+| Method | How | Freshness |
+|---|---|---|
+| Scheduled refresh | `python -m src.store --name mystore --refresh [--every 1440]`, or *Update products now* in the app | the interval (daily recommended) |
+| Webhooks | Shopify / WooCommerce product webhooks to `/webhooks/mystore/shopify` or `/woocommerce` | seconds |
 
-**Running it for a real store.** Each client gets `app.rate_limit_per_minute` requests (30/min for `/search` and
-`/chat`, 120/min for the rest; then 429 with `Retry-After`). With `app.require_api_key: true`, requests need an
-`X-API-Key` header: the store's key (`python -m src.store --name mystore --secrets`) or `CONCIERGE_API_KEY` for the
-demo catalog; the widget sends it from `data-key="..."` (a key in a web page is visible, so the rate limit and the
-origin allow-list remain the real protection for public widgets). Every request is logged to
-`artifacts/api_requests.jsonl` (method, path, store, status, time; no query text, no IP address). A `Dockerfile` is
-included (`docker build -t concierge .`; mount `data/`, `artifacts/`, `stores/`; it was written but not built here,
-because Docker is not installed on the development machine); put an HTTPS reverse proxy in front and set
-`app.trust_proxy: true`.
+Only products whose text changed are embedded again. Webhooks are checked with the platform's HMAC signature, repeats
+are ignored, an older update never overwrites a newer one, and deleted products cannot come back from a late update.
+WooCommerce: paste the store's secret from `--secrets` into the webhook form. Shopify signs with its own key: save it
+with `--set-webhook-secret KEY` or in the app. Keep the daily refresh as a safety net for missed deliveries.
 
-**Shopper events.** The widget reports what shoppers do (`POST /events`: products shown, clicks, saves, Buy clicks;
-a random per-browser id, no query text, no IP). For an imported store, popularity becomes buy 5 + save 3 + click 1
-points (each browser counted once per product, action and day, over the last year); it is applied on every import,
-refresh and webhook update, or with `python -m src.store --name mystore --update-popularity` (nothing is re-embedded).
-`GET /events/summary?store=mystore` (always needs the store's owner `admin_key` from `--secrets`, not the public
-widget key) and `--events-summary` give the last 30 days: counts, shoppers, click, save and Buy-click rates, top
-products. Privacy: the browser id is random and renewed every 30 days; tracking is off with Do Not Track or
-`data-track="off"` on the script tag; events older than a year are ignored and are deleted, with repeats collapsed,
-whenever the file is compacted (every import and refresh, `--update-popularity`, or past 20 MB, when the oldest
-"shown" events go first); days are UTC. The demo catalog keeps its Amazon popularity.
+### Shopper events and popularity
 
-**Instant updates (webhooks).** `POST /webhooks/<store>/shopify` and `/webhooks/<store>/woocommerce` accept product
-create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update
-or remove that one product (only it is re-embedded). WooCommerce: paste the store's webhook secret (`--secrets`) into
-the webhook form. Shopify signs with its own key: save it with `--set-webhook-secret KEY` or in the app (*Add your
-store → Instant updates*). Each product keeps the platform's `updated_at` (inside the signed body): an older update
-is skipped, deleted products are remembered for 30 days so a late update cannot bring them back, and a refresh never
-replaces a product a newer webhook already updated (limit: WooCommerce delete messages carry no time). Keep a daily
-`--refresh` as the safety net for missed deliveries. Shopify
-delete messages carry only Shopify's numeric id: for a store imported from a CSV export, give the store's address when
-importing so deletes can be checked against the live store (otherwise they are reported as `not_found` until the
-next import). Bodies over 2 MB are refused; webhooks have their own rate limit (600 a minute).
+The widget reports products shown, clicks, saves and Buy clicks (`POST /events`) with a random browser id renewed
+every 30 days; no query text, no IP address, off under Do Not Track. An imported store's popularity becomes buy 5 +
+save 3 + click 1 points, each browser counted once per product, action and day. The owner reads a 30-day summary
+with `GET /events/summary?store=mystore` (owner `admin_key`) or `--events-summary`.
 
-**MCP server for AI shopping agents.** Tools `search_products` and `get_similar` (read-only). The app's *Connect to
-Claude Desktop* button sets it up; by hand, add:
+### 🤖 MCP server for AI agents
+
+Read-only tools `search_products` and `get_similar`. The app's *Connect to Claude Desktop* button sets it up; by hand:
 
 ```json
 {"mcpServers": {"shopping-assistant-mystore": {"command": "<project>/.venv/Scripts/python.exe",
   "args": ["<project>/app/mcp_server.py"], "env": {"CONCIERGE_STORE": "mystore"}}}}
 ```
 
-**Any LLM provider.** Gemini is the default (and the reported results are Gemini results). Set `llm.provider` in
-`config.yaml` to `openai` for ChatGPT, to `openai` with a `base_url` for open-weight models served by Ollama, vLLM,
-LM Studio and similar OpenAI-compatible servers, or to `anthropic` for Claude, and set `llm.model` / `llm.judge_model`.
-Keys go in `.env` as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` (a local open-weight server needs none). Caching, call
-caps, retries, structured output and the chat agent's function calling work the same for every provider.
+---
 
-## Setup
+## 🔌 API Reference
 
-Requires Python 3.12 (created with [uv](https://docs.astral.sh/uv/)) and a Gemini API key.
+Interactive docs at `http://localhost:8000/docs`. `store` selects an imported store; omit it for the demo catalog.
 
-```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Linux/macOS: .venv/bin/python
-cp .env.example .env    # then put your key after GEMINI_API_KEY=
-.venv/Scripts/python.exe -m pytest -q
-```
-
-Data is downloaded from Hugging Face into `data/raw/` (not committed), then processed:
+| Method & path | Purpose | LLM calls |
+|---|---|---|
+| `POST /search` · `POST /search/stream` | One search: parsed limits, ranked products with score components, grounded answer (stream: products first) | 2 |
+| `POST /chat` · `POST /chat/stream` | One chat turn; the client sends back the returned `state` | 1–2 |
+| `POST /chat/action` | Card buttons (save, similar, buy) | 0 |
+| `GET /similar/{product_id}` | Nearest products by embedding | 0 |
+| `POST /events` · `GET /events/summary` | Shopper events · owner-only 30-day summary | 0 |
+| `POST /webhooks/{store}/{shopify\|woocommerce}` | Signed product create / update / delete | 0 |
+| `GET /meta` · `GET /health` · `GET /widget.js` · `GET /` | Store facts · health · widget · demo store page | 0 |
 
 ```bash
-B=https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main
-curl -L -o data/raw/meta_Appliances.jsonl "$B/raw/meta_categories/meta_Appliances.jsonl"          # 285 MB
-curl -L -o data/raw/Appliances_rating_only.csv "$B/benchmark/0core/rating_only/Appliances.csv"   # 122 MB
-.venv/Scripts/python.exe -m src.data     # -> data/processed/, eval/results/cleaning_log.json
-.venv/Scripts/python.exe -m src.embed    # -> artifacts/embeddings.npy (~27 min on CPU, minutes on a GPU)
-.venv/Scripts/python.exe -m src.parse --split dev    # Gemini, cached; also --split test
-.venv/Scripts/python.exe -m src.evaluate --split dev # S1-S5 runs, no LLM calls -> eval/results/runs.csv
-.venv/Scripts/python.exe -m src.evaluate judge       # LLM relevance judge (cached) -> eval/results/judge_labels.csv
-.venv/Scripts/python.exe -m src.evaluate qrels       # merge with human labels -> eval/qrels.csv
-.venv/Scripts/python.exe -m src.personalize          # next-item experiment, no LLM -> eval/results/exp_b_*.csv
-.venv/Scripts/python.exe -m src.pipeline             # grounded answers for all queries -> eval/results/generation.csv
-.venv/Scripts/python.exe -m src.evaluate judge-s6    # personalized runs + judge their new items -> eval/results/runs_s6.csv
-.venv/Scripts/python.exe -m src.evaluate qrels       # merge judge + human labels -> eval/qrels.csv
-.venv/Scripts/python.exe -m src.evaluate report --split test  # all test tables -> eval/results/test_*.csv
+curl -s -X POST localhost:8000/search -H "Content-Type: application/json" \
+     -d '{"query": "quiet countertop ice maker under $150", "n": 3}'
 ```
 
-## Repository layout
-
-```
-docs/        requirements, technical specification, approved proposal
-intent/      intent.md (playbook Stage 1)
-src/         pipeline modules (llm.py = cached, rate-limited Gemini client; store.py = feed importer)
-app/         Streamlit demo, REST API + drop-in widget, MCP server
-tests/       pytest suite (never calls the real API)
-notebooks/   EDA, baselines, pipeline demo, evaluation
-eval/        benchmark queries, relevance labels, results
-config.yaml  all settings (seed 42, models, weights)
+```json
+{"query": "quiet countertop ice maker under $150",
+ "parsed": {"semantic_query": "quiet countertop ice maker", "max_price": 150.0, "category": "Ice Makers", "...": "..."},
+ "products": [{"product_id": "B0...", "title": "...", "price": 93.04, "avg_rating": 4.3, "s_sem": 1.0, "final": 0.93,
+               "reason": "Operates quietly ...", "...": "..."}],
+ "answer": "Here are quiet countertop ice makers under $150 ...", "flags": {"...": "..."}, "timings_ms": {"...": 0}}
 ```
 
-## Reproducibility
+```bash
+curl -N -X POST localhost:8000/chat/stream -H "Content-Type: application/json" -d '{"message": "a beverage fridge, not stainless"}'
+# {"type": "products", "products": [...]}        <- cards, as soon as they are ranked
+# {"type": "turn", "text": "...", "state": {...}} <- validated answer and the state to send back next turn
+```
 
-Seed 42, pinned versions, temperature 0, and every LLM call cached by
-(model, prompt version, schema, settings, prompt). Reported numbers come from files in `eval/results/`.
+---
 
-## Data and credits
+## 📁 Project Structure
 
-Amazon Reviews 2023 (McAuley Lab): Hou et al., *Bridging Language and Items for Retrieval and
-Recommendation*, 2024. Used for academic, non-commercial purposes. Embeddings:
-[BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5). LLM: Google Gemini API.
+```
+ai-shopping-concierge/
+├── src/                 pipeline modules (logic lives here; notebooks import from it)
+├── app/                 Streamlit app, FastAPI API, chat widget, MCP server, website connection helper
+├── notebooks/           01_eda · 02_baselines · 03_pipeline · 04_evaluation
+├── docs/                requirements · technical specification · final report · proposal
+├── intent/              intent.md (planning stage)
+├── eval/                benchmark queries, relevance labels, chat conversations, results/ (every reported number)
+├── tests/               pytest suite (fake LLM client; never calls a real API)
+├── config.yaml          all settings (seed 42, models, weights, app settings)
+├── requirements.txt     pinned dependencies (CPU-only torch)
+├── Dockerfile           API container (non-root, model baked in, offline at run time)
+└── data/ · artifacts/ · stores/   downloaded data, embeddings and caches, imported stores (not committed)
+```
+
+| Module | Responsibility |
+|---|---|
+| `src/data.py` | Load and clean the catalog and interactions; product text |
+| `src/embed.py` | BGE embeddings, saved and reloaded |
+| `src/parse.py` | LLM query parser, catalog validation, fallback |
+| `src/filters.py` | Hard filters (price, category, brand, exclusions, stock); relaxation suggestions |
+| `src/retrieve.py` | TF-IDF, BM25, dense, post-filter, filter-first, hybrid |
+| `src/personalize.py` | User profiles, weighted ranking, next-item experiment |
+| `src/generate.py` | Grounded answers and the validator |
+| `src/pipeline.py` | End-to-end `respond()`, `search_products()`, `get_similar()`, optional re-ranker |
+| `src/agent.py` | Chat agent: tool choice, state, actions, conversation evaluation |
+| `src/llm.py` | Shared LLM client and provider adapters |
+| `src/store.py` | Store import, stock, refresh, webhooks, secrets, shopper events |
+| `src/evaluate.py` | Metrics, bootstrap CIs, judge, qrels, experiments, report tables |
+| `app/api.py` | REST API, streaming, rate limits, API keys, webhooks, events |
+| `app/widget.js` | Drop-in chat bubble / search box (renders text only, never HTML) |
+| `app/mcp_server.py` | MCP tools for AI agents |
+| `app/streamlit_app.py` · `app/connection.py` | Demo app · starting the API and connecting Claude Desktop |
+
+---
+
+## ⚙️ Configuration Reference
+
+### `config.yaml` (main keys)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `retrieval` | filter-first, pool 200 | Benchmark retrieval settings |
+| `ranking` | `w_sem 0.7, w_pers 0.25, w_pop 0.05` | Evaluated ranking weights |
+| `llm.provider` · `llm.model` · `llm.judge_model` | `gemini` · Flash-Lite · Flash | Provider (`gemini`, `openai` + optional `base_url`, `anthropic`) and models |
+| `app.ranking` | adds `w_rat 0.1` | Production ranking (ratings on) |
+| `app.retrieval` | `hybrid_alpha 0.5` | Production retrieval (hybrid on; optional `rerank`) |
+| `app.max_llm_calls` | 300 | LLM calls per server process, then catalog-field answers |
+| `app.allowed_origins` | localhost | Websites allowed to call the API from a browser |
+| `app.rate_limit_per_minute` | 30 LLM / 120 other | Per-client limits (webhooks 600, events 300) |
+| `app.require_api_key` · `app.trust_proxy` | false · false | API keys; trust `X-Forwarded-For` behind a proxy |
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_API_KEY` · `OPENAI_API_KEY` · `ANTHROPIC_API_KEY` | LLM keys (in `.env`, never committed) |
+| `CONCIERGE_ALLOWED_ORIGINS` | Comma-separated allowed origins (overrides config) |
+| `CONCIERGE_API_KEY` | API key for the demo catalog when keys are required |
+| `CONCIERGE_STORE` | Store used by the MCP server |
+| `HF_HUB_OFFLINE=1` | Use the cached embedding model without a network check |
+
+### Dependencies
+
+| Area | Packages |
+|---|---|
+| ML and retrieval | torch (CPU), sentence-transformers, faiss-cpu, scikit-learn, rank-bm25, scipy |
+| Data | pandas, numpy, pydantic, pyyaml |
+| LLM | google-genai, openai, anthropic, httpx |
+| Apps | fastapi, uvicorn, streamlit, mcp |
+| Notebooks and tests | jupyter, nbconvert, matplotlib, seaborn, pytest |
+
+All versions are pinned in [requirements.txt](requirements.txt).
+
+---
+
+## 🧪 Testing
+
+```bash
+.venv/Scripts/python.exe -m pytest -q      # 305 passed
+```
+
+| Area | Test files |
+|---|---|
+| Data, embeddings, retrieval, filters | `test_data`, `test_embed`, `test_retrieve`, `test_filters` |
+| Parsing, ranking, grounded answers | `test_parse`, `test_personalize`, `test_generate`, `test_pipeline` |
+| Evaluation and judge | `test_evaluate`, `test_judge` |
+| LLM client and providers | `test_llm`, `test_providers` |
+| Chat agent | `test_agent` |
+| Stores, webhooks, events | `test_store` |
+| API, MCP, app | `test_api`, `test_mcp`, `test_connection`, `test_streamlit_app`, `test_smoke` |
+
+**Mocking strategy:** every test uses a fake LLM client or fake SDK classes on a toy catalog; no test calls a real API.
+
+### Reproduce the evaluation (no LLM calls: everything is cached)
+
+```bash
+.venv/Scripts/python.exe -m src.evaluate --split dev               # S1-S5 runs
+.venv/Scripts/python.exe -m src.evaluate report --split test       # all test tables -> eval/results/test_*.csv
+.venv/Scripts/python.exe -m src.personalize                        # next-item experiment
+.venv/Scripts/python.exe -m src.pipeline                           # grounded answers -> eval/results/generation.csv
+.venv/Scripts/python.exe -m src.agent --limit 0                    # scripted chat conversations
+.venv/Scripts/python.exe -m src.evaluate hybrid --split test --completed   # production extensions (also rating, adaptive, rerank)
+```
+
+---
+
+## 🛡 Error Handling & Security
+
+| Layer | Situation | Behaviour |
+|---|---|---|
+| Parser | invalid JSON or unknown category / brand | one retry, then semantic-only; invalid values dropped and logged |
+| Answer | invented ID, wrong price or brand | regenerate once, then a template answer from catalog fields |
+| LLM | timeouts, 429, 503 | retries with backoff; per-process call cap; cached answers reused |
+| Chat | unusable tool call, forged state | plain search fallback; client state re-validated every turn |
+| API | abuse | per-client rate limits, optional API keys, CORS allow-list, 2 MB webhook bodies |
+| Webhooks | forged, replayed, out of order | HMAC check, duplicate ids ignored, older updates skipped, deletions remembered |
+| Data | concurrent writers, crashes | lock file per store, atomic file swaps with rollback |
+| Privacy | shopper data | no query text or IP stored; random browser id renewed every 30 days; events kept one year |
+| Untrusted text | product descriptions, chat state | treated as data in prompts; widget renders text only |
+
+---
+
+## ☁️ Deployment
+
+```bash
+docker build -t concierge .
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env \
+  -v ${PWD}/data:/app/data -v ${PWD}/artifacts:/app/artifacts -v ${PWD}/stores:/app/stores concierge
+```
+
+The image runs as a non-root user, contains the embedding model and starts without network checks; data, embeddings,
+caches and stores stay on mounted volumes. For a public deployment put an HTTPS reverse proxy in front, set
+`app.trust_proxy: true` and add the store's domain to the allowed origins. Free-tier options: Hugging Face Spaces
+(Docker) for a demo, or an always-free VM for persistent stores and webhooks. The Dockerfile has not yet been built
+on the development machine.
+
+---
+
+## 🔧 Troubleshooting
+
+| Problem | Cause | Solution |
+|---|---|---|
+| First request takes ~100 s | The embedding model checks Hugging Face on load | Set `HF_HUB_OFFLINE=1` once the model is cached |
+| `429` / quota errors | Free-tier daily limits (failed calls count) | Wait for the daily reset; cached answers still work |
+| Widget shows nothing on your site | Origin not allowed | Add the domain to `app.allowed_origins` |
+| Webhooks return 401 | Wrong or missing signing key | Shopify: `--set-webhook-secret`; WooCommerce: use the secret from `--secrets` |
+| A store import says "feed has no column" | Unrecognised export layout | Use `--map field=column,...` or the column questions in the app |
+| `ImportError` after updating | The app was running old code | Restart the app |
+
+---
+
+## ✅ Production Checklist
+
+- [x] Hard limits enforced in code; answers grounded and validated
+- [x] Caching, retries, call caps, rate limits, optional API keys
+- [x] Signed webhooks with replay and ordering guard; scheduled refresh as safety net
+- [x] Stock awareness; privacy-limited shopper events
+- [x] Container image definition (non-root, offline model)
+- [ ] Build and run the Docker image on a server; HTTPS proxy
+- [ ] Shared database and vector index for several server copies
+- [ ] User accounts, per-store keys entered in the app, owner dashboard
+- [ ] Online A/B test with a holdout group
+
+---
+
+## 📜 Data, Credits & License
+
+Amazon Reviews 2023 (McAuley Lab): Hou et al., *Bridging Language and Items for Retrieval and Recommendation*, 2024,
+used for academic, non-commercial purposes. Embeddings: [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5).
+LLM: Google Gemini API. No license file is included: the code is © Maaz Amjad, shared for the atomcamp bootcamp
+assessment; the dataset remains under its own terms.
+
+<div align="center">
+
+**[⬆ Back to top](#-ai-shopping-concierge)**
+
+</div>

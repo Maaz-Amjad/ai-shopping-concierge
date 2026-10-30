@@ -19,6 +19,8 @@ jupyter==1.1.1
 ipykernel==7.4.0
 nbconvert==7.17.2
 tqdm==4.70.1
+scipy==1.18.1
+httpx==0.28.1
 # Phase 11: demo app, store connector API, MCP server
 streamlit==1.66.1
 fastapi==0.162.0

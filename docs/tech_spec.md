@@ -443,3 +443,37 @@ Grade each product for the query: 2 = fits intent and all stated constraints,
 Return JSON: a list of (product_id, grade). Query: {query}
 Products: [batched product fields]
 ```
+
+
+## Appendix B: Implementation addendum (27–30 October 2026)
+
+Approved changes made after the core evaluation; the evaluated configuration in sections 6–10 is unchanged, and the
+production settings live under `app:` in `config.yaml`. Results: [final report](final_report.md) sections 11–12.
+
+**B.1 Production scoring.** `app.ranking` adds a fourth term, `w_rat · S_rat`, with S_rat the min-max normalized
+Bayesian average rating ((20 · catalog mean + n · average) / (20 + n)); weights 0.6 / 0.25 / 0.05 / 0.1. A catalog
+without ratings ranks exactly as with the spec weights. `pers_factor_with_limits` (kept at 1, i.e. off) can shrink the
+personal weight for requests with stated limits.
+
+**B.2 Hybrid retrieval.** Inside the hard-filter mask: score = (1 − a) · minmax(dense cosine) + a · minmax(BM25 on the
+semantic query); `app.retrieval.hybrid_alpha = 0.5`; a = 0 is exactly S5. An optional cross-encoder
+(`app.retrieval.rerank`) re-scores the top 30; off by default.
+
+**B.3 Stock.** Each imported product has `in_stock` (true, false or unknown); products marked false are removed in the
+same mask as the other hard limits (section 8.1); unknown counts as available.
+
+**B.4 Interfaces added to section 11.** `POST /search/stream` and `POST /chat/stream` (newline-delimited JSON: the
+ranked products first, then the validated answer); `POST /chat`, `POST /chat/action`; `POST /events` and an owner-only
+`GET /events/summary`; `POST /webhooks/{store}/{shopify|woocommerce}`. The chat agent (`src/agent.py`) uses a forced
+function call to choose one action; Python validates the arguments and runs it, and earlier limits are merged in
+Python, not by the LLM.
+
+**B.5 Security (section 16).** Per-client rate limits; optional per-store API keys plus a separate owner key;
+CORS allow-list; webhook bodies capped at 2 MB and verified with HMAC-SHA256; duplicate deliveries ignored; updates
+older than the stored platform timestamp skipped; deletions remembered for 30 days; a lock file and atomic file
+swaps per store; request log without query text or IP; shopper events keep only a random browser id renewed every 30
+days, the product, the action and the time, for one year.
+
+**B.6 Evaluation additions (section 10).** Each change was pre-registered (grid and rule written before results),
+chosen on dev, and reported once on test with paired bootstrap intervals; 33 products surfaced only by the new
+rankings were graded by the same LLM judge into a separate label file, so the main labels are unchanged.

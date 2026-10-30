@@ -232,3 +232,34 @@ Priority uses MoSCoW: **M** Must, **S** Should, **C** Could.
 | 8 | Grounded generation and grounding validator |
 | 9 | Ablations, confidence intervals, error analysis |
 | 10 | README, report, slides, demo video, optional Streamlit |
+
+
+## 14. Addendum: approved scope changes (27–30 October 2026)
+
+The sections above are the requirements as approved before the build. The changes below were approved by the author
+during the build, after the core evaluation (sections 7.7 and 10) was complete; none of them changes the reported
+benchmark, which keeps the evaluated configuration. Results are in the [final report](final_report.md), sections 11–12.
+
+| ID | Requirement (added or changed) | Status |
+|---|---|---|
+| FR-U2 | Streamlit demo, reinstated from the cut list, extended to a no-code app for non-technical store owners | Done |
+| FR-U3 | MCP server with `search_products` and `get_similar`, reinstated from the cut list | Done |
+| FR-U4 | REST API and drop-in website widget (search box and chat bubble) | Done |
+| FR-U5 | Store connector: import Shopify, WooCommerce or any CSV/JSON export (moved in from "out of scope") | Done |
+| FR-C1 | Conversational assistant: refine, compare, similar items, shortlist, product-page hand-off; no orders | Done |
+| FR-C2 | Any LLM provider: Gemini (default, reported), OpenAI-compatible including open-weight servers, Claude | Done |
+| FR-P5 | Star ratings as a ranking signal for the production ranking | Done; neutral on test |
+| FR-P6 | Smaller personal weight for requests with stated limits | Evaluated; kept off (dev and test disagreed) |
+| FR-R5 | Hybrid keyword + semantic retrieval inside the hard-filter mask | Done; +0.037 NDCG@10 (indicative) |
+| FR-R6 | Cross-encoder re-ranker (bge-reranker-base) | Evaluated; off (negative on test, too slow on CPU) |
+| FR-F4 | Out-of-stock products are never recommended; stock read from each platform | Done |
+| FR-S1 | Store updates: scheduled incremental refresh and signed Shopify/WooCommerce webhooks | Done |
+| FR-S2 | Shopper events (shown, click, save, buy) feed an imported store's popularity; owner summary | Done |
+| FR-Q6 | Keep a category only when the request states it | Tried and reverted (too literal) |
+| NFR-1 | Show products before the written answer (streaming endpoints) | Done; answer latency unchanged |
+| NFR-5 | API hardening: rate limits, optional API keys, request log without query text or IP, HMAC webhooks, replay and ordering guard, privacy-limited events | Done |
+| NFR-9 | Container image for deployment | Dockerfile written; not yet built on the development machine |
+
+Out of scope remains: multi-tenant accounts, autonomous purchasing, production-scale infrastructure, LLM fine-tuning
+and computer vision. Accounts, per-store keys entered in the app, an owner dashboard and a new web front end are
+planned for a later phase.
