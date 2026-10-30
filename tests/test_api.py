@@ -402,3 +402,26 @@ def test_events_are_recorded_and_the_summary_needs_the_store_key(tmp_path, monke
 def test_widget_reports_events_without_query_text(client):
     js = client.get("/widget.js").text
     assert '"/events"' in js and "client_id" in js and "keepalive" in js
+
+
+
+# ---- verifier findings, Phase 13.8 ----------------------------------------------------------------------
+
+def test_summary_rejects_the_public_widget_key(tmp_path, monkeypatch):
+    from src import store
+    from test_store import events_store
+
+    events_store(tmp_path, monkeypatch)
+    keys = store.store_secrets("shop")
+    client = TestClient(create_app(lambda s: resources(tmp_path, [])))
+    assert client.get("/events/summary", params={"store": "shop"}, headers={"X-API-Key": keys["api_key"]}).status_code == 401
+    assert client.get("/events/summary", params={"store": "shop"},
+                      headers={"X-API-Key": keys["admin_key"]}).status_code == 200
+
+
+def test_widget_events_privacy_and_restores(client):
+    js = client.get("/widget.js").text
+    assert "log.forEach(show)" not in js                                 # restored messages are not "shown" again
+    assert "doNotTrack" in js and 'data-track' in js                     # opt-out
+    assert "CLIENT_DAYS" in js                                           # the browser id is renewed
+    assert "early: true" in js and "!data.early" in js                   # final results tracked in every mode

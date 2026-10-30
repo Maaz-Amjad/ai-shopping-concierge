@@ -731,3 +731,51 @@ def test_event_summary_rates_and_top_products(tmp_path, monkeypatch):
     assert s["counts"] == {"shown": 4, "click": 1, "save": 1, "buy": 1} and s["shoppers"] == 2
     assert s["click_rate"] == 0.25 and s["buy_click_rate"] == 0.25
     assert s["top_products"][0] == {"product_id": "a", "score": 6}
+
+
+
+# ---- verifier findings, Phase 13.8 ----------------------------------------------------------------------
+
+def test_events_file_is_compacted_and_bounded(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    path = tmp_path / "stores" / "shop" / "events.jsonl"
+    old = {"ts": "2020-01-01T00:00:00", "client": "z", "type": "buy", "product_id": "a"}
+    path.write_text(json.dumps(old) + "\n")
+    for _ in range(30):                                                # the same action repeated all day
+        store.record_events("shop", "x", [{"type": "click", "product_id": "a"}])
+    store.compact_events("shop")
+    lines = [json.loads(x) for x in path.read_text().splitlines()]
+    assert lines == [{**lines[0]}] and lines[0]["client"] == "x"       # old dropped, repeats collapsed
+    monkeypatch.setattr(store, "MAX_EVENT_BYTES", 2000)
+    for i in range(100):                                               # many browsers: file stays bounded
+        store.record_events("shop", f"bot{i}", [{"type": "click", "product_id": "b"}])
+    assert path.stat().st_size <= 2000 + 500
+
+
+def test_event_popularity_is_cached_until_the_file_changes(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    store.record_events("shop", "x", [{"type": "buy", "product_id": "a"}])
+    reads = []
+    real = store._read_events
+    monkeypatch.setattr(store, "_read_events", lambda *a, **k: reads.append(1) or real(*a, **k))
+    store.event_popularity("shop")
+    store.event_popularity("shop")
+    assert len(reads) == 1
+    store.record_events("shop", "y", [{"type": "buy", "product_id": "a"}])
+    assert store.event_popularity("shop").to_dict() == {"a": 10} and len(reads) == 2
+
+
+def test_malformed_events_are_ignored(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    assert store.record_events("shop", "x", [{"type": ["buy"], "product_id": "a"},
+                                             {"type": "buy", "product_id": ["a"]}, "junk"]) == 0
+
+
+def test_summary_needs_a_separate_owner_key(tmp_path, monkeypatch):
+    events_store(tmp_path, monkeypatch)
+    keys = store.store_secrets("shop")
+    assert len(keys["admin_key"]) >= 32 and keys["admin_key"] != keys["api_key"]
+    (tmp_path / "stores" / "shop" / "secrets.json").write_text(json.dumps(
+        {"webhook_secret": "w" * 40, "api_key": "k" * 40}))           # created before admin keys existed
+    assert len(store.store_secrets("shop")["admin_key"]) >= 32           # added, others kept
+    assert store.store_secrets("shop")["api_key"] == "k" * 40
