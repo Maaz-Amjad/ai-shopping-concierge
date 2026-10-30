@@ -840,53 +840,6 @@ def run_hybrid(cfg: dict, split: str = "dev", completed: bool = False) -> pd.Dat
     return out
 
 
-def apply_category_rule(parsed: pd.DataFrame, queries: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    """Phase 13.7 on saved parses: drop a category the query text does not state. Returns (parses, changed ids)."""
-    from src.parse import category_stated
-
-    text = queries.set_index("query_id")["text"]
-    out, changed = parsed.copy(), []
-    for i, row in out.iterrows():
-        cat = row.get("category")
-        if isinstance(cat, str) and cat and not category_stated(cat, text.get(row["query_id"], "")):
-            out.at[i, "category"] = None
-            changed.append(row["query_id"])
-    return out, changed
-
-
-def run_parse_rule(cfg: dict, split: str = "dev") -> pd.DataFrame:
-    """Phase 13.7: S5 and parse F1 with the saved parses, before and after the stated-category rule (no LLM)."""
-    from src.data import load_catalog
-
-    queries = load_queries()
-    part = queries[queries["split"] == split]
-    before = load_parsed()
-    after, changed = apply_category_rule(before, queries)
-    qrels = load_qrels()
-    qrels = qrels[qrels["query_id"].isin(part["query_id"])]
-    catalog = load_catalog()
-    rows, per_q = [], {}
-    for label, parsed in (("before", before), ("after", after)):
-        runs, _ = run_systems(part, parsed, cfg, systems=("S5",), depth=CONDENSE_DEPTH)
-        plain = ranking_metrics(runs, qrels, ks=(10,)).set_index("query_id")["NDCG@10"]
-        judged = ranking_metrics(judged_only(runs, qrels), qrels, ks=(10,)).set_index("query_id")["NDCG@10"]
-        adh = adherence_table(runs, part, catalog, ks=(10,))
-        counts = parse_counts(parsed[parsed.query_id.isin(part.query_id)], part)
-        hard = micro_f1(counts[counts.field.isin(HARD_FIELDS)])
-        per_q[label] = judged
-        rows.append({"parses": label, "changed_queries": ",".join(c for c in changed if c in set(part.query_id)),
-                     "parse_f1": hard["f1"], "parse_precision": hard["precision"], "parse_recall": hard["recall"],
-                     "ndcg10": plain.mean(), "ndcg10_judged_only": judged.mean(),
-                     "adherence10": adh["adherence@10"].mean()})
-    out = pd.DataFrame(rows)
-    mean, lo, hi = paired_bootstrap(per_q["before"].tolist(), per_q["after"].reindex(per_q["before"].index).tolist())
-    out["after_vs_before"], out["lo"], out["hi"] = [0.0, mean], [0.0, lo], [0.0, hi]
-    out.to_csv(RESULTS_DIR / f"parse_rule_{split}.csv", index=False)
-    print(f"{split}: queries changed by the rule: {out['changed_queries'].iloc[0] or 'none'}")
-    print(out.round(4).to_string(index=False))
-    return out
-
-
 def run_qrels() -> None:
     """Agreement on the verified sample, then eval/qrels.csv (human grade wins).
 
@@ -1118,7 +1071,7 @@ def run_report(cfg: dict, split: str = "test") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Benchmark runs, LLM judging and qrels.")
-    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "judge-extra", "parse-rule", "report"], default="run",
+    parser.add_argument("action", nargs="?", choices=["run", "judge", "judge-s6", "qrels", "prefix", "sensitivity", "rating", "adaptive", "hybrid", "judge-extra", "report"], default="run",
                         help="run: S1-S5 runs + summaries; judge: grade the pool (Gemini, cached); "
                              "qrels: agreement + eval/qrels.csv from eval/manual_labels.csv")
     parser.add_argument("--split", choices=["dev", "test"], default="dev",
@@ -1149,9 +1102,6 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.action == "judge-extra":
         run_judge_extra(cfg, args.limit)
-        return
-    if args.action == "parse-rule":
-        run_parse_rule(cfg, args.split)
         return
     if args.action == "adaptive":
         run_adaptive(cfg, args.split)

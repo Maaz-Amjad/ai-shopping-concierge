@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 296 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 293 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -383,18 +383,17 @@ never shown. This shortens the time until a shopper sees products to roughly the
 retrieval; the time until the full answer is unchanged. Not measured live (that needs fresh LLM calls); the order of
 events is covered by tests.
 
-### 12.7 Categories the shopper did not state (post-hoc)
+### 12.7 Categories the shopper did not state: tried and reverted
 
-The error analysis (section 7) found the parser adding a category the shopper never said, which over-filters. Both
-such cases are test queries (q09, q15) and dev has none, so nothing could be tuned on dev and this change is
-**post-hoc**: it was motivated by test errors, so its test result is not an unbiased estimate. The rule is the
-specification's own ("extract only constraints the user states", spec 7.2), not a patch for one query: a new request
-keeps a category only if it names it (the category's words, singular or plural). Limits carried over in the chat are
-not re-checked, so "only GE" after "fridge water filters" keeps the category. On the saved parses (no LLM calls) it
-changes nothing on dev; on test it removes the invented category in q15 (parse F1 0.938 → 0.968, NDCG@10 and adherence
-unchanged) and does not fix q09, where "ice maker" is stated but names the part's appliance, not the product. That one
-remains a known limitation. Reproduce with `python -m src.evaluate parse-rule --split dev|test`. The tables in section
-6 keep the original parses.
+The error analysis (section 7) found the parser adding a category the shopper never said (q09, q15; both test
+queries, none on dev, so any fix would be post-hoc). A literal rule from spec 7.2 ("keep a category only if the request
+names it") was built and then **reverted**: on the saved benchmark parses it fixed q15 and kept all 8 correct category
+filters, but a review checked it against the catalog's own category names and found it drops most real requests. The
+14 "X Parts & Accessories" categories and "Washers & Dryers" hold 77 % of the products, and "dryer part under $20",
+"a fridge" or "coffee maker accessories" would all have lost their correctly parsed category. The benchmark's gold
+categories all quote the category name almost word for word, which is why it did not show this. Recognising stated
+categories needs synonyms and partial names (fridge → Refrigerators), better done by the parser itself with a larger,
+category-diverse dev set; it is left as future work, and q09 and q15 remain open errors.
 
 ### 12.8 Feedback loop: what shoppers do feeds popularity
 
@@ -412,17 +411,17 @@ catalog keeps its original popularity, so no reported result changes.
 ### 12.9 Completing the labels for 12.1 and 12.5
 
 Both earlier results left products unlabelled. The same LLM judge then graded the 33 test (query, product) pairs that
-the two chosen settings put in their top 10 and nobody had graded (32 done; one pair is still open after the free
-quota ran out; grades: 19 relevant, 11 partly relevant, 2 not relevant). These labels are kept in a separate file
+the two chosen settings put in their top 10 and nobody had graded (all 33; grades: 20 relevant, 11 partly relevant,
+2 not relevant). These labels are kept in a separate file
 (`judge_labels_extra.csv`) and were not checked by a person, unlike the 23 % sample of the main labels; every table in
 section 6 keeps the original labels. Adding relevant products also raises the best achievable score of their queries,
 so the S5 baseline moves too (NDCG@10 0.738 → 0.730); each comparison below uses the same labels on both sides.
 
 | Test, with the completed labels | NDCG@10 change [95% CI] | Unjudged in top 10 |
 |---|---|---|
-| Hybrid a = 0.5 vs S5 (12.5) | **+0.037** [−0.017, +0.104] on judged products; +0.033 counting the rest as not relevant | 0.8 % |
+| Hybrid a = 0.5 vs S5 (12.5) | **+0.037** [−0.017, +0.104] (judged-only and plain now agree) | 0 % |
 | Rating weight 0.10 vs 0, new shoppers (12.1) | −0.009 [−0.032, +0.008] | 0 % |
-| Rating weight 0.10 vs 0, returning shoppers (12.1) | −0.007 [−0.015, +0.000] | 0 % |
+| Rating weight 0.10 vs 0, returning shoppers (12.1) | −0.006 [−0.015, +0.000] | 0 % |
 
 The two readings of the hybrid result now agree: keyword matching brought in mostly relevant products, and the gain is
 modest and indicative (the interval includes zero). The rating result stays neutral. Reproduce with

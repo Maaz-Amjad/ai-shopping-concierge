@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from src.filters import build_mask, out_of_stock
 from src.generate import Answer, user_prices, validate_answer
 from src.llm import CallLimitReached, QuotaExhausted
-from src.parse import ParsedQuery, category_stated, validate
+from src.parse import ParsedQuery, validate
 from src.pipeline import (Resources, get_similar, product_fields, records, respond, result_to_dict,
                           search_products)
 
@@ -204,8 +204,6 @@ def _bad_numbers(bad: list[int], size: int, what: str = "the list") -> str:
 def do_search(args: dict, message: str, state: ChatState, res: Resources, user_id: str | None, n: int,
               link: str | None, on_products: Callable[[list[dict]], None] | None = None) -> TurnResult:
     request = str(args.get("request") or message).strip()[:MAX_TEXT]
-    if isinstance(args.get("category"), str) and not category_stated(args["category"], message):
-        args = {**args, "category": None}             # a new category must be stated (13.7); earlier ones carry over
     raw = ParsedQuery(semantic_query=request, **merge_limits(args, state))
     parsed, log = validate(raw, request, res.meta)
     out = respond(request, res, user_id=user_id, n=n, parsed=parsed, use_exclusions=True,

@@ -153,26 +153,3 @@ def test_empty_query_rejected(tmp_path):
     with pytest.raises(ValueError):
         parse_query("   ", META, c)
 
-
-# ---- Phase 13.7 (G): a category is kept only when the request states it -----------------------------------
-
-def test_category_stated_accepts_name_or_singular_only():
-    from src.parse import category_stated
-
-    assert category_stated("Ice Makers", "quiet portable countertop ice maker under $150")
-    assert category_stated("Range Hoods", "RANGE HOODS for small kitchens")
-    assert category_stated("Beverage Refrigerators", "beverage refrigerator for cans")
-    assert category_stated("Espresso Machine Accessories", "ok, show me espresso machine accessories")
-    assert category_stated("Espresso Machine Accessories", "an espresso machine accessory")
-    assert not category_stated("Ice Makers", "make chewable nugget ice at home for parties")
-    assert not category_stated("Range Hoods", "hood ornament")
-
-
-def test_parse_query_drops_a_category_the_shopper_did_not_state(tmp_path):
-    c, _ = client(tmp_path, [pq(semantic_query="nugget ice at home", category="Ice Makers"),
-                             pq(semantic_query="ice maker", category="Ice Makers")])
-    out = parse_query("make chewable nugget ice at home", META, c)
-    assert out.parsed.category is None and any("not stated" in line for line in out.log)
-    assert parse_query("an ice maker for parties", META, c).parsed.category == "Ice Makers"
-    kept, _ = validate(ParsedQuery(semantic_query="cold drinks", category="Ice Makers"), "cold drinks", META)
-    assert kept.category == "Ice Makers"                     # validate alone (used for carried-over limits) keeps it

@@ -235,12 +235,3 @@ def test_buy_notices_a_sold_out_product_when_every_stock_is_known(tmp_path):
     out = run_action("buy", {"product_id": "A"}, ChatState(shortlist=["A"]), res, link=LINK)
     assert "out of stock" in out.text
 
-
-def test_chat_ignores_a_new_category_the_message_does_not_state_but_keeps_earlier_ones(tmp_path):
-    res = agent_res(tmp_path, [call("search", request="ice maker", category="Ice Makers"),
-                               call("search", request="nugget ice", category="Range Hoods")],
-                    [gen(["A", "B"]), gen(["A", "B"])])
-    first = chat_turn("I need an ice maker", None, res)
-    assert first.state.limits.category == "Ice Makers"
-    second = chat_turn("something for nugget ice", first.state, res)      # Range Hoods is not stated: ignored
-    assert second.state.limits.category == "Ice Makers"
