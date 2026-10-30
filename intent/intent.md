@@ -25,10 +25,6 @@ Deadline 28 Oct 2026 23:59 PKT. Gemini free tier only (tight daily quotas),
 temperature 0, all LLM calls cached. No personal data sent; keys never committed.
 Tune on dev queries only; report on test only. Spec docs are the source of truth.
 
-## Open questions
-Report and slide format atomcamp expects? Presentation date? Is the free-tier
-judge quota enough, or will billing be enabled?
-
 ## Revisions (27–30 Oct 2026)
 
 **Constraints changed.** Deadline moved from 28 to 30 Oct 2026. The relevance judge's free-tier quota (20 requests a
@@ -38,7 +34,7 @@ day, failed requests count) was enough with waiting between quota resets; billin
 NDCG@10, 100 % constraint adherence, 0 invented product IDs; filter-first vs post-filter and personalization's small
 relevance cost were reported as neutral and negative findings ([final report](../docs/final_report.md), sections 1–10).
 
-**Intent widened (approved by the author during the build).** From a research prototype to a store-ready concierge
+**Intent widened (decided during the build).** From a research prototype to a store-ready concierge
 that a non-technical store owner can plug in: a no-code demo app, REST API and website chat bubble, MCP server, store
 connector (Shopify, WooCommerce, any CSV/JSON), a conversational agent that can refine, compare, shortlist and hand
 off to the store (never placing orders), any LLM provider, and production extensions (ratings, stock, store updates by
