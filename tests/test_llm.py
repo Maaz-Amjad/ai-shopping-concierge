@@ -258,3 +258,30 @@ def test_invalid_tool_call_responses_are_not_cached(tmp_path):
     with pytest.raises(ValueError):
         c.generate_tool_call("p", "v", tools)
     assert c.generate_tool_call("p", "v", tools)["name"] == "search" and c.calls_made == 2
+
+
+
+# ---- security review (30 Oct) -----------------------------------------------------------------------------
+
+def test_uncached_calls_run_in_parallel_not_one_at_a_time(tmp_path):
+    import threading
+    import time as _time
+
+    def slow(model, prompt, *a):
+        _time.sleep(0.4)
+        return "ok " + prompt
+
+    c = LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", rpm=1e9, transport=slow)
+    threads = [threading.Thread(target=c.generate, args=(f"p{i}", "v")) for i in range(4)]
+    start = _time.perf_counter()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert _time.perf_counter() - start < 1.0 and c.calls_made == 4      # 4 x 0.4 s would be 1.6 s
+
+
+def test_a_torn_cache_line_is_skipped(tmp_path):
+    (tmp_path / "c.jsonl").write_text('{"key": "k1", "response": "a"}\n{"key": "k2", "resp')
+    c = LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", transport=lambda *a: "x")
+    assert c._cache == {"k1": "a"}

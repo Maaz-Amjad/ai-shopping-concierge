@@ -41,3 +41,17 @@ def test_backup_keeps_the_original_settings_and_bad_shapes_are_refused(tmp_path)
         with pytest.raises(ValueError):
             connection.add_to_claude_desktop("a", path)
         assert path.read_text(encoding="utf-8") == bad
+
+
+
+def test_stale_pid_file_never_kills_an_unrelated_process(tmp_path, monkeypatch):
+    from app import connection
+
+    monkeypatch.setattr(connection, "PID_FILE", tmp_path / "connection.pid")
+    (tmp_path / "connection.pid").write_text("4242")
+    calls = []
+    monkeypatch.setattr(connection, "_is_our_server", lambda pid: False)
+    monkeypatch.setattr(connection.subprocess, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(connection.os, "kill", lambda *a: calls.append(a), raising=False)
+    connection.stop_previous()
+    assert calls == [] and not (tmp_path / "connection.pid").exists()

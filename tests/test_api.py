@@ -431,3 +431,54 @@ def test_widget_events_privacy_and_restores(client):
 def test_widget_replaces_an_unreadable_saved_id(client):
     js = client.get("/widget.js").text
     assert 'try { saved = JSON.parse(localStorage.getItem("cw-client")' in js       # an old plain id is replaced
+
+
+
+# ---- security review (30 Oct) -----------------------------------------------------------------------------
+
+def test_long_queries_and_large_bodies_are_refused(client):
+    assert client.post("/search", json={"query": "x" * 501}).status_code == 422
+    big = {"message": "hi", "state": {"shown": ["A"] * 100_000}}
+    assert client.post("/chat", json=big).status_code == 413
+    bad = client.post("/webhooks/shop/shopify", content=b"{}", headers={"Content-Length": "abc"})
+    assert bad.status_code in (400, 401)
+
+
+def test_llm_endpoints_answer_busy_instead_of_queueing(tmp_path, monkeypatch):
+    import threading
+
+    from app import api
+
+    gate, entered = threading.Event(), threading.Event()
+    res = resources(tmp_path, [])
+    monkeypatch.setattr(api, "search_products", lambda *a, **k: (entered.set(), gate.wait(5), None)[2])
+    client = TestClient(create_app(lambda s: res, max_concurrent_llm=1))
+    first = threading.Thread(target=lambda: client.post("/search", json={"query": "ice maker"}))
+    first.start()
+    assert entered.wait(5)
+    busy = client.post("/search", json={"query": "ice maker"})
+    assert busy.status_code == 503 and "Retry-After" in busy.headers
+    assert client.get("/health").status_code == 200                       # never blocked by LLM work
+    gate.set()
+    first.join(5)
+
+
+def test_one_address_cannot_rotate_many_browser_ids(tmp_path, monkeypatch):
+    from test_store import events_store
+
+    events_store(tmp_path, monkeypatch)
+    client = TestClient(create_app(lambda s: resources(tmp_path, [])))
+    counts = [client.post("/events", json={"store": "shop", "client_id": f"bot{i}",
+                                           "events": [{"type": "buy", "product_id": "a"}]}).json()["recorded"]
+              for i in range(8)]
+    assert counts == [1] * 5 + [0] * 3
+
+
+def test_error_details_are_not_sent_to_clients(tmp_path):
+    from test_agent import agent_res
+
+    res = agent_res(tmp_path, [""], [json.dumps({"semantic_query": "ice maker"}), gen(["A", "B"])])
+    res.client.tool_transport = lambda *a: (_ for _ in ()).throw(RuntimeError("secret-host.internal:9999 refused"))
+    client = TestClient(create_app(lambda s: res))
+    body = client.post("/chat", json={"message": "ice maker"}).text
+    assert "secret-host" not in body

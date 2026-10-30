@@ -813,3 +813,39 @@ def test_import_compacts_old_events(tmp_path, monkeypatch):
     feed = pd.DataFrame({"product_id": ["a"], "title": ["Kettle"]})
     store.build_store_from_feed("shop", feed, "generic", model=FakeModel(), cfg=cfg, source="upload")
     assert path.read_text() == ""                                      # deleted, not just ignored
+
+
+
+# ---- security review (30 Oct) -----------------------------------------------------------------------------
+
+def test_feed_addresses_must_be_public(monkeypatch):
+    import socket
+
+    for bad in ("localhost.", "0x7f.1", "127.1", "2130706433"):
+        with pytest.raises(ValueError):
+            store.shopify_feed_url(bad)
+    assert store.shopify_feed_url("MyShop.com.") == "https://myshop.com/products.json"
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, *a, **k: [(2, 1, 6, "", ("127.0.0.1", 443))])
+    with pytest.raises(ValueError, match="public"):
+        store.public_url("https://127.0.0.1.nip.io/products.json")
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    assert store.public_url("https://shop.example.com/products.json") == "https://shop.example.com/products.json"
+    with pytest.raises(ValueError):
+        store.public_url("file:///etc/passwd")
+
+
+def test_secrets_file_is_written_atomically(tmp_path, monkeypatch):
+    webhook_store(tmp_path, monkeypatch)
+    store.store_secrets("shop")
+    store.set_webhook_secret("shop", "s" * 32)
+    assert not list((tmp_path / "stores" / "shop").glob("secrets.json.*"))
+    assert store.read_secrets("shop")["webhook_secret"] == "s" * 32
+
+
+def test_a_truncated_live_listing_never_mass_deletes(tmp_path, monkeypatch):
+    cfg = csv_store(tmp_path, monkeypatch)
+    monkeypatch.setattr(store, "MAX_PAGES", 1)
+    monkeypatch.setattr(store, "PAGE_SIZE", 1)
+    monkeypatch.setattr(store, "fetch_products_json", lambda url: {"products": [{"id": 1, "handle": "steel-kettle"}]})
+    store.apply_store_changes("csv", delete_ids=["999"], model=FakeModel(), cfg=cfg)
+    assert len(pd.read_pickle(tmp_path / "stores" / "csv" / "catalog.pkl")) == 3

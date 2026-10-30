@@ -239,3 +239,15 @@ def test_cross_encoder_keeps_the_rest_below_and_falls_back_when_it_cannot_load(t
     monkeypatch.setattr(pipeline, "cross_encoder", broken)
     same = pipeline.rerank_candidates(cands, "q", catalog, {"top_k": 2, "weight": 1.0})
     assert same["row"].tolist() == [0, 1, 2] and same["score"].tolist() == [0.9, 0.8, 0.1]   # dense order kept
+
+
+
+def test_search_queries_are_capped(tmp_path):
+    from src.pipeline import search_products
+
+    prompts = []
+    res = resources(tmp_path, [])
+    answers = iter([json.dumps({"semantic_query": "ice maker"}), gen(["A", "B"])])
+    res.client.transport = lambda model, prompt, *a: prompts.append(prompt) or next(answers)
+    search_products("ice maker " + "x" * 5000, res)
+    assert prompts and all(len(p) < 6000 for p in prompts)
