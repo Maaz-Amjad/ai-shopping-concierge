@@ -396,6 +396,25 @@ unchanged) and does not fix q09, where "ice maker" is stated but names the part'
 remains a known limitation. Reproduce with `python -m src.evaluate parse-rule --split dev|test`. The tables in section
 6 keep the original parses.
 
+### 12.8 Completing the labels for 12.1 and 12.5
+
+Both earlier results left products unlabelled. The same LLM judge then graded the 33 test (query, product) pairs that
+the two chosen settings put in their top 10 and nobody had graded (32 done; one pair is still open after the free
+quota ran out; grades: 19 relevant, 11 partly relevant, 2 not relevant). These labels are kept in a separate file
+(`judge_labels_extra.csv`) and were not checked by a person, unlike the 23 % sample of the main labels; every table in
+section 6 keeps the original labels. Adding relevant products also raises the best achievable score of their queries,
+so the S5 baseline moves too (NDCG@10 0.738 → 0.730); each comparison below uses the same labels on both sides.
+
+| Test, with the completed labels | NDCG@10 change [95% CI] | Unjudged in top 10 |
+|---|---|---|
+| Hybrid a = 0.5 vs S5 (12.5) | **+0.037** [−0.017, +0.104] on judged products; +0.033 counting the rest as not relevant | 0.8 % |
+| Rating weight 0.10 vs 0, new shoppers (12.1) | −0.009 [−0.032, +0.008] | 0 % |
+| Rating weight 0.10 vs 0, returning shoppers (12.1) | −0.007 [−0.015, +0.000] | 0 % |
+
+The two readings of the hybrid result now agree: keyword matching brought in mostly relevant products, and the gain is
+modest and indicative (the interval includes zero). The rating result stays neutral. Reproduce with
+`python -m src.evaluate rating|hybrid --split test --completed`.
+
 ## 13. Future work
 
 Feed the error analysis back into the parser (penalize categories the user did not state); evaluate on a larger,

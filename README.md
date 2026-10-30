@@ -35,7 +35,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13.2 Stock and catalog updates | done: out-of-stock products never recommended; incremental re-sync |
 | 13.3 Smaller personal weight for requests with limits | done, kept off: dev chose no change, test disagreed (report 12.3) |
 | 13.4 API hardening, store webhooks, Dockerfile | done: rate limits, optional API keys, request log, signed Shopify/WooCommerce webhooks |
-| 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.044 [-0.010, +0.109] on judged products but -0.025 counting the 12% unjudged as irrelevant; part-number query 0.60 -> 1.00; used by the app |
+| 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.037 [-0.017, +0.104] after judging the new products (+0.033 counting the last 0.8% unjudged as irrelevant); part-number query 0.60 -> 1.00; used by the app |
 | 13.6 Faster replies: products first, answer when validated | done: `/search/stream`, `/chat/stream`; the widget shows products before the summary |
 | 13.7 Category kept only when the request states it | done (post-hoc, see report 12.7): test parse F1 0.938 -> 0.968, dev unchanged |
 
