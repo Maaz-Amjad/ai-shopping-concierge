@@ -92,7 +92,8 @@
   var tracking = script.getAttribute("data-track") !== "off" && navigator.doNotTrack !== "1";
   var clientId = (function () {
     try {
-      var saved = JSON.parse(localStorage.getItem("cw-client") || "null");
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem("cw-client") || "null"); } catch (e) { saved = null; }   // old plain id
       if (saved && saved.id && Date.now() - saved.t < CLIENT_DAYS * 864e5) return saved.id;
       var id = Math.random().toString(36).slice(2) + Date.now().toString(36);
       localStorage.setItem("cw-client", JSON.stringify({id: id, t: Date.now()}));

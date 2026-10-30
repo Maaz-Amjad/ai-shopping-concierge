@@ -37,8 +37,8 @@ app:
   # pers_factor_with_limits (Phase 13.3): share of w_pers kept when a request states price/category/brand limits.
   # Dev chose 1.0 (off); test disagreed (0.5 would have helped), so it stays off until a larger dev set decides.
   ranking: {w_sem: 0.6, w_pers: 0.25, w_pop: 0.05, w_rat: 0.1, pers_factor_with_limits: 1.0}
-  # Phase 13.5: share of BM25 keyword score blended into filter-first retrieval (chosen on dev; test: judged-only
-  # NDCG@10 +0.044 [-0.010, +0.109], plain -0.025 with 12 % unjudged). Benchmark `retrieval` has none (= S5).
+  # Phase 13.5: share of BM25 keyword score blended into filter-first retrieval (chosen on dev; test with every new
+  # product judged: NDCG@10 +0.037 [-0.017, +0.104]). Benchmark `retrieval` has none (= S5).
   retrieval: {hybrid_alpha: 0.5}
   # optional cross-encoder (Phase 13.9; test -0.012 and 13-17 s per query on CPU, so off): add to retrieval above
   #   rerank: {model: BAAI/bge-reranker-base, top_k: 30, weight: 0.25}

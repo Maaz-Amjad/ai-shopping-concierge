@@ -308,6 +308,10 @@ def build_store_from_feed(name: str, feed: pd.DataFrame, preset: str = "generic"
     if catalog.empty:
         raise ValueError("no products left after import")
     log.update(source=source, preset=preset, mapping=mapping or {}, site=site_host(site))
+    try:
+        compact_events(name)                              # retention: old events are deleted on every import
+    except OSError:
+        pass
     with store_lock(name):
         previous = STORES_DIR / name / "catalog.pkl"
         if previous.exists():
@@ -635,26 +639,44 @@ def record_events(name: str, client_id: str, events: list) -> int:
             with open(path, "a", encoding="utf-8") as f:
                 f.write("".join(json.dumps(r) + "\n" for r in rows))
             if path.stat().st_size > MAX_EVENT_BYTES:
-                _compact(name)
+                try:
+                    _compact(name)
+                except OSError:                           # e.g. Windows: file open elsewhere; retried next time
+                    pass
     return len(rows)
 
 
 def _compact(name: str) -> None:
-    """Rewrite events.jsonl: drop events older than EVENT_DAYS, keep one per (browser, action, product, day), and
-    if it is still over MAX_EVENT_BYTES keep only the newest that fit (call with the events lock held)."""
+    """Rewrite events.jsonl: drop events older than EVENT_DAYS, keep one per (browser, action, product, day), and if
+    it is still over half of MAX_EVENT_BYTES (room before the next compaction) drop the oldest "shown" events first
+    (they score 0), then the oldest others. Events appended meanwhile are carried over. Call with the events lock."""
     path = STORES_DIR / name / "events.jsonl"
+    if not path.exists():
+        return
+    start_size = path.stat().st_size
     df = _read_events(name, EVENT_DAYS)
     df = df.assign(day=df["ts"].str[:10]).drop_duplicates(["client", "type", "product_id", "day"]).drop(columns="day")
-    lines = [json.dumps(r) + "\n" for r in df.to_dict("records")]
-    kept, size = [], 0
-    for line in reversed(lines):                          # newest first, until the size budget is used
-        size += len(line.encode())
-        if size > MAX_EVENT_BYTES:
-            break
-        kept.append(line)
+    lines = [(r["type"], json.dumps(r) + "\n") for r in df.to_dict("records")]
+    target, size = MAX_EVENT_BYTES // 2, sum(len(t.encode()) for _, t in lines)
+    keep = [True] * len(lines)
+    for wanted in ("shown", None):                        # oldest shown first, then oldest of any type
+        for i, (kind, text) in enumerate(lines):
+            if size <= target:
+                break
+            if keep[i] and (wanted is None or kind == wanted):
+                keep[i], size = False, size - len(text.encode())
     tmp = path.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text("".join(reversed(kept)), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text("".join(t for (_, t), k in zip(lines, keep) if k), encoding="utf-8")
+        with open(path, "rb") as f:                       # anything appended by another process meanwhile
+            f.seek(start_size)
+            extra = f.read()
+        if extra:
+            with open(tmp, "ab") as f:
+                f.write(extra)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def compact_events(name: str) -> None:
@@ -671,12 +693,13 @@ def _read_events(name: str, days: int) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame(columns=cols)
     rows = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            try:
-                rows.append(json.loads(line))
-            except ValueError:
-                continue                                  # a torn last line from a crash is skipped
+    with _store_locks[f"{name}:events"]:                  # never read while this process compacts the file
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue                              # a torn last line from a crash is skipped
     df = pd.DataFrame(rows, columns=cols)
     cutoff = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - days * 86400))
     return df[df["ts"] >= cutoff]
@@ -918,7 +941,8 @@ def main(argv: list[str] | None = None) -> None:
                         help="recompute popularity from shopper events (no re-embedding)")
     parser.add_argument("--events-summary", action="store_true", help="print what shoppers did in the last 30 days")
     parser.add_argument("--secrets", action="store_true",
-                        help="print the store's webhook paths, webhook secret and API key (creates them once)")
+                        help="print the store's webhook paths, webhook secret, public API key (widget data-key) and "
+                             "owner admin key for the events summary (creates them once)")
     parser.add_argument("--set-webhook-secret", default="", help="save the signing key Shopify shows for webhooks")
     parser.add_argument("--preset", default="generic", choices=sorted(PRESETS))
     parser.add_argument("--map", default="", help="field=column pairs, e.g. 'title=Name,price=Cost'")

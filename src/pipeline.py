@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -164,28 +165,42 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
 
 
 _cross_encoders: dict[str, Any] = {}
+_cross_encoder_lock = threading.Lock()
 
 
 def cross_encoder(name: str) -> Any:
-    """Load a cross-encoder once per process (sentence-transformers CrossEncoder)."""
-    if name not in _cross_encoders:
-        from sentence_transformers import CrossEncoder
+    """Load a cross-encoder once per process (one load even with concurrent first requests); a failed load is
+    remembered and raised again without retrying the download."""
+    with _cross_encoder_lock:
+        if name not in _cross_encoders:
+            try:
+                from sentence_transformers import CrossEncoder
 
-        _cross_encoders[name] = CrossEncoder(name, max_length=512)
-    return _cross_encoders[name]
+                _cross_encoders[name] = CrossEncoder(name, max_length=512)
+            except Exception as exc:  # noqa: BLE001 - remembered, see docstring
+                _cross_encoders[name] = exc
+        model = _cross_encoders[name]
+    if isinstance(model, Exception):
+        raise model
+    return model
 
 
 def rerank_candidates(cands: pd.DataFrame, query: str, catalog: pd.DataFrame, rr: dict) -> pd.DataFrame:
-    """Phase 13.9: re-order the top `top_k` candidates by (1 - weight) * dense + weight * cross-encoder (both min-max
-    normalized); the rest stay below them in their order. The true cosine is kept for explanations."""
+    """Phase 13.9: re-order the top `top_k` candidates by (1 - weight) * retrieval score + weight * cross-encoder (both
+    min-max normalized); the rest stay below them in their order. The true cosine is kept for explanations.
+    Evaluated with dense retrieval only; with hybrid retrieval on (the app) the combination is untested.
+    If the model cannot be loaded or run, the retrieval order is kept."""
     from src.retrieve import hybrid_scores
 
     k = int(rr.get("top_k", 30))
     top, rest = cands.head(k).copy(), cands.iloc[k:].copy()
     text_col = catalog["product_text"] if "product_text" in catalog else catalog["title"]
     texts = text_col.astype(str).str[:1000].to_numpy()[top["row"].to_numpy()]
-    ce = np.asarray(cross_encoder(rr.get("model", "BAAI/bge-reranker-base")).predict(
-        [(query, t) for t in texts], batch_size=k), dtype=np.float64)
+    try:
+        ce = np.asarray(cross_encoder(rr.get("model", "BAAI/bge-reranker-base")).predict(
+            [(query, t) for t in texts], batch_size=k), dtype=np.float64)
+    except Exception:  # noqa: BLE001 - a missing or broken re-ranker never breaks search
+        return cands
     if "cosine" not in top:
         top["cosine"], rest["cosine"] = top["score"], rest["score"]
     top["score"] = hybrid_scores(top["score"].to_numpy(dtype=np.float64), ce, float(rr["weight"]))

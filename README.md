@@ -37,6 +37,7 @@ Work in progress; deadline 30 Oct 2026. Design decisions and deviations will be 
 | 13.4 API hardening, store webhooks, Dockerfile | done: rate limits, optional API keys, request log, signed Shopify/WooCommerce webhooks |
 | 13.5 Hybrid keyword + semantic retrieval | done: test NDCG@10 +0.037 [-0.017, +0.104] after judging every new product (indicative); part-number query 0.60 -> 1.00; used by the app |
 | 13.6 Faster replies: products first, answer when validated | done: `/search/stream`, `/chat/stream`; the widget shows products before the summary |
+| 13.7 Stated-category parser rule | tried and reverted: too literal for the catalog's category names (report 12.7) |
 | 13.8 Feedback loop: shopper events feed popularity | done: `POST /events`, owner-only `GET /events/summary`; imported stores rank by what shoppers do |
 | 13.9 Cross-encoder re-ranker (bge-reranker-base) | evaluated, off by default: dev +0.009, test -0.012 [-0.038, +0.010]; ~13-17 s per query on CPU |
 
@@ -144,8 +145,9 @@ refresh and webhook update, or with `python -m src.store --name mystore --update
 `GET /events/summary?store=mystore` (always needs the store's owner `admin_key` from `--secrets`, not the public
 widget key) and `--events-summary` give the last 30 days: counts, shoppers, click, save and Buy-click rates, top
 products. Privacy: the browser id is random and renewed every 30 days; tracking is off with Do Not Track or
-`data-track="off"` on the script tag; events older than a year are deleted, repeats are collapsed and the file is
-capped at 20 MB; days are UTC. The demo catalog keeps its Amazon popularity.
+`data-track="off"` on the script tag; events older than a year are ignored and are deleted, with repeats collapsed,
+whenever the file is compacted (every import and refresh, `--update-popularity`, or past 20 MB, when the oldest
+"shown" events go first); days are UTC. The demo catalog keeps its Amazon popularity.
 
 **Instant updates (webhooks).** `POST /webhooks/<store>/shopify` and `/webhooks/<store>/woocommerce` accept product
 create/update/delete webhooks, check the signature (HMAC-SHA256 of the body), ignore repeated deliveries, and update

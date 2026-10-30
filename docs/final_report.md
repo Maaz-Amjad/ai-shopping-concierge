@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 300 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 305 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -389,7 +389,7 @@ The error analysis (section 7) found the parser adding a category the shopper ne
 queries, none on dev, so any fix would be post-hoc). A literal rule from spec 7.2 ("keep a category only if the request
 names it") was built and then **reverted**: on the saved benchmark parses it fixed q15 and kept all 8 correct category
 filters, but a review checked it against the catalog's own category names and found it drops most real requests. The
-14 "X Parts & Accessories" categories and "Washers & Dryers" hold 77 % of the products, and "dryer part under $20",
+11 "X Parts & Accessories" categories (7,360 products) and "Washers & Dryers" (326) hold 77 % of the products, and "dryer part under $20",
 "a fridge" or "coffee maker accessories" would all have lost their correctly parsed category. The benchmark's gold
 categories all quote the category name almost word for word, which is why it did not show this. Recognising stated
 categories needs synonyms and partial names (fridge → Refrigerators), better done by the parser itself with a larger,
@@ -405,8 +405,10 @@ over the last year (UTC days); it is applied on every import, refresh and webhoo
 anything (a one-off check on a copy of the 300-product sample with simulated events took 0.3 s). The store owner can
 read a 30-day summary (counts, shoppers, click, save and Buy-click rates, top products) with a separate owner key, not
 the widget's public key; this is the data source for the planned dashboard. Privacy: the browser id is random and
-renewed every 30 days, tracking is off under Do Not Track or `data-track="off"`, events older than a year are deleted,
-repeats are collapsed and the file is capped at 20 MB. Caveats: the weights are a reasonable default, not tuned (there is no outcome data to tune them on), and a
+renewed every 30 days, tracking is off under Do Not Track or `data-track="off"`, and events older than a year are
+ignored and deleted, with repeats collapsed, whenever the file is compacted (every import and refresh, a manual
+update, or past 20 MB, when the oldest zero-weight "shown" events go first). The file lock is per process: running a
+manual update from a second process while the API records events can, rarely, lose events appended at that moment. Caveats: the weights are a reasonable default, not tuned (there is no outcome data to tune them on), and a
 determined bot with many browser ids could still inflate popularity; the rate limit only slows it. The benchmark
 catalog keeps its original popularity, so no reported result changes.
 
@@ -442,10 +444,12 @@ separate embeddings. BAAI/bge-reranker-base re-scored the top 30 of S5, blended 
 
 The small dev gain did not carry over: on test the re-ranker is neutral to slightly worse, with every product
 labelled. Larger b pulls in more unlabelled products and lowers the plain score sharply (−0.17 at b = 1 on test). It is
-also slow on a CPU: re-scoring 30 products took a median of 12.7 s per query on dev and 16.5 s on test (one test query
-took about 16 minutes, most likely the machine being busy, so the p95 is not meaningful), far beyond the 6 s
+also slow on a CPU: re-scoring 30 products took a median of 12.7 s per query on dev and 16.5 s on test (the test p95, 947 s,
+is driven by at least one extreme outlier, most likely the machine being busy; per-query times were not saved), far beyond the 6 s
 end-to-end target. Before the test run it was decided to leave it off by default whatever the result; it remains
-available as a setting (`app.retrieval.rerank: {model, top_k, weight}`) for a server with a GPU. A re-ranker trained or
+available as a setting (`app.retrieval.rerank: {model, top_k, weight}`) for a server with a GPU; note that in the
+app it would blend with the hybrid retrieval score, a combination that was not evaluated, and a model that cannot load
+leaves the normal order in place. A re-ranker trained or
 tuned on shopping data, and a larger benchmark, would be needed to revisit this.
 
 ## 13. Future work
