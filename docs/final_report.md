@@ -194,7 +194,7 @@ rating term in the production ranking only (section 12).
 Seed 42, pinned library versions (`requirements.txt`), temperature 0, pinned model names, and every LLM response cached
 by (model, prompt version, schema, settings, prompt). All reported tables are regenerated without LLM calls by
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
-`04_evaluation` (which run with an LLM call budget of zero). 287 unit and integration tests run offline with a fake client.
+`04_evaluation` (which run with an LLM call budget of zero). 290 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -382,6 +382,19 @@ streamed word by word on purpose: it must pass the grounding validator before an
 never shown. This shortens the time until a shopper sees products to roughly the query-understanding call plus
 retrieval; the time until the full answer is unchanged. Not measured live (that needs fresh LLM calls); the order of
 events is covered by tests.
+
+### 12.7 Categories the shopper did not state (post-hoc)
+
+The error analysis (section 7) found the parser adding a category the shopper never said, which over-filters. Both
+such cases are test queries (q09, q15) and dev has none, so nothing could be tuned on dev and this change is
+**post-hoc**: it was motivated by test errors, so its test result is not an unbiased estimate. The rule is the
+specification's own ("extract only constraints the user states", spec 7.2), not a patch for one query: a new request
+keeps a category only if it names it (the category's words, singular or plural). Limits carried over in the chat are
+not re-checked, so "only GE" after "fridge water filters" keeps the category. On the saved parses (no LLM calls) it
+changes nothing on dev; on test it removes the invented category in q15 (parse F1 0.938 → 0.968, NDCG@10 and adherence
+unchanged) and does not fix q09, where "ice maker" is stated but names the part's appliance, not the product. That one
+remains a known limitation. Reproduce with `python -m src.evaluate parse-rule --split dev|test`. The tables in section
+6 keep the original parses.
 
 ## 13. Future work
 

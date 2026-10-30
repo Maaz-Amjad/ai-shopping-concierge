@@ -1,0 +1,3 @@
+parses,changed_queries,parse_f1,parse_precision,parse_recall,ndcg10,ndcg10_judged_only,adherence10,after_vs_before,lo,hi
+before,q15,0.9375,0.8823529411764706,1.0,0.7380610565292621,0.7380610565292621,1.0,0.0,0.0,0.0
+after,q15,0.967741935483871,0.9375,1.0,0.7380610565292621,0.7380610565292621,1.0,0.0,0.0,0.0

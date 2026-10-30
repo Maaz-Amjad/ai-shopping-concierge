@@ -168,6 +168,26 @@ def validate(raw: ParsedQuery, query: str, meta: CatalogMeta) -> tuple[ParsedQue
     return parsed, log
 
 
+def _singular(word: str) -> str:
+    """The part singular and plural share, matched as a prefix: accessories -> accessor, boxes -> box, hoods -> hood."""
+    if word.endswith("ies"):
+        return word[:-3]
+    if word.endswith(("ches", "shes", "xes")):
+        return word[:-2]
+    return word[:-1] if word.endswith("s") else word
+
+
+def category_stated(category: str, text: str) -> bool:
+    """Phase 13.7: does the request name this category (its words, last word singular or plural)? Spec 7.2: extract
+    only constraints the shopper states; an inferred category over-filters (error analysis: q15)."""
+    words = re.findall(r"[a-z0-9]+", str(category).lower())
+    if not words:
+        return False
+    tokens = " ".join(re.findall(r"[a-z0-9]+", str(text).lower()))
+    stem = " ".join(words[:-1] + [_singular(words[-1])])
+    return re.search(r"\b" + re.escape(stem), tokens) is not None
+
+
 def parse_query(query: str, meta: CatalogMeta, client: LLMClient, raise_on_quota: bool = True) -> ParseResult:
     """LLM parse with one retry on invalid output, then semantic-only fallback (spec 7.5).
 
@@ -180,6 +200,9 @@ def parse_query(query: str, meta: CatalogMeta, client: LLMClient, raise_on_quota
         try:
             raw = client.generate_json(build_prompt(query, meta, error), PROMPT_VERSION, ParsedQuery)
             parsed, log = validate(raw, query, meta)
+            if parsed.category and not category_stated(parsed.category, query):
+                log.append(f"category {parsed.category} not stated in the query; dropped")
+                parsed = parsed.model_copy(update={"category": None})
             return ParseResult(parsed, log, fallback=False, llm_attempts=attempt)
         except ValidationError as exc:
             error = str(exc).splitlines()[0][:300]

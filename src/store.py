@@ -189,7 +189,8 @@ def merge_woo_variations(feed: pd.DataFrame, log: dict) -> pd.DataFrame:
         return feed
     var = feed[is_var]
     price = _text(var, "Sale price").where(_text(var, "Sale price").ne(""), _text(var, "Regular price"))
-    cheapest = pd.Series(price.map(parse_price).to_numpy(), index=_text(var, "Parent").str.removeprefix("id:"))         .groupby(level=0).min()
+    cheapest = pd.Series(price.map(parse_price).to_numpy(), index=_text(var, "Parent").str.removeprefix("id:"))
+    cheapest = cheapest.groupby(level=0).min()
     out = feed[~is_var].copy()
     for column in ("Sale price", "Regular price"):
         if column not in out:
@@ -734,7 +735,8 @@ def shopify_feed_url(address: str) -> str:
         is_ip = True
     except ValueError:
         is_ip = False
-    if not host or is_ip or "." not in host or host.endswith((".local", ".localhost", ".internal"))             or not re.fullmatch(r"[a-z0-9.-]+", host):
+    if not host or is_ip or "." not in host or host.endswith((".local", ".localhost", ".internal")) \
+            or not re.fullmatch(r"[a-z0-9.-]+", host):
         raise ValueError("enter the store's public web address, e.g. mystore.com")
     return f"https://{host}/products.json"
 
