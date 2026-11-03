@@ -220,3 +220,29 @@ def test_demo_uses_the_visitors_key_for_their_session_and_never_shows_it(tmp_pat
     assert "visitor-key-123" not in shown
     for name in ("cache.jsonl", "calls.jsonl"):
         assert "visitor-key-123" not in (tmp_path / name).read_text(encoding="utf-8")
+
+
+def test_demo_basic_mode_does_not_claim_a_failed_fact_check(tmp_path, monkeypatch):
+    at, calls = demo_app(tmp_path, monkeypatch)
+    at.text_input(key="query").set_value("ice maker").run()
+    captions = " ".join(c.value for c in at.caption)
+    assert not at.exception and calls == []
+    assert "failed the fact check" not in captions and "basic mode" in captions
+
+
+def test_demo_key_is_not_sent_to_another_provider_after_switching(tmp_path, monkeypatch):
+    at, calls = demo_app(tmp_path, monkeypatch)
+    at.text_input(key="visitor_key").set_value("AIza-google-key").run()           # typed for Gemini
+    at.selectbox(key="visitor_provider").select("Anthropic (Claude)").run()       # then the provider is changed
+    at.text_input(key="query").set_value("ice maker").run()
+    assert not at.exception
+    assert calls == []                                       # Claude has no key of its own yet: basic mode, no call
+
+
+def test_demo_basic_mode_applies_the_narrow_it_down_limits_without_llm(tmp_path, monkeypatch):
+    at, calls = demo_app(tmp_path, monkeypatch)
+    at.sidebar.number_input[0].set_value(110.0).run()                              # highest price $110
+    at.text_input(key="query").set_value("ice maker").run()
+    cards = [m.value for m in at.markdown if m.value.startswith("**")]
+    assert not at.exception and calls == []
+    assert any("ice maker a" in c for c in cards) and not any("ice maker b" in c for c in cards)   # B costs $120
