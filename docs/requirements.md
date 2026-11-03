@@ -259,7 +259,7 @@ benchmark, which keeps the evaluated configuration. Results are in the [final re
 | NFR-1 | Show products before the written answer (streaming endpoints) | Done; answer latency unchanged |
 | NFR-5 | API hardening: rate limits, optional API keys, request log without query text or IP, HMAC webhooks, replay and ordering guard, privacy-limited events | Done |
 | NFR-9 | Container image for deployment | Done; built, checked (health, search) and published on Docker Hub |
-| FR-U6 | Public hosted demo (Streamlit Community Cloud): demo catalog only, store-owner sections hidden, basic mode with no LLM call, full assistant with the visitor's own key kept only in their session | Done; live at ai-shopping-concierge.streamlit.app (3 Nov); processed catalog and embeddings committed |
+| FR-U6 | Public hosted demo (Streamlit Community Cloud): demo catalog only, store-owner sections hidden, basic mode with no LLM call, full assistant with the visitor's own key kept only in their session | Done; live at ai-shopping-concierge.streamlit.app; processed catalog and embeddings committed |
 
 Out of scope remains: multi-tenant accounts, autonomous purchasing, production-scale infrastructure, LLM fine-tuning
 and computer vision. Accounts, per-store keys entered in the app, an owner dashboard and a new web front end are

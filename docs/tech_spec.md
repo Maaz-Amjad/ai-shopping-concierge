@@ -478,7 +478,7 @@ days, the product, the action and the time, for one year.
 chosen on dev, and reported once on test with paired bootstrap intervals; 33 products surfaced only by the new
 rankings were graded by the same LLM judge into a separate label file, so the main labels are unchanged.
 
-**B.7 Hosted demo (decided 3 November).** `CONCIERGE_DEMO=1` runs the Streamlit app as a public demo: demo catalog
+**B.7 Hosted demo.** `CONCIERGE_DEMO=1` runs the Streamlit app as a public demo: demo catalog
 only, no store-owner sections. Each browser session gets its own `LLMClient`: without a visitor key it has
 `max_calls = 0`, so the existing call-cap fallback (section 14) gives semantic-only parsing, filters from the UI and the
 template answer; with a key, `LLMClient(api_key=...)` passes it only to the provider SDK (never to the cache key, call
