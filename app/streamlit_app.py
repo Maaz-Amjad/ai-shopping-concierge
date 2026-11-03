@@ -278,8 +278,10 @@ with shop_tab:
     for col, example in zip(cols, EXAMPLES):                # a callback runs before the page is redrawn, so the
         col.button(example, use_container_width=True,       # request box shows the example and it is searched
                    on_click=lambda text=example: st.session_state.update(query=text))
-    query = st.text_input("Your request", key="query", label_visibility="collapsed",
-                          placeholder="e.g. quiet portable countertop ice maker under $150")
+    box, go = st.columns([6, 1], vertical_alignment="bottom")         # Search sits on the same row as the box
+    query = box.text_input("Your request", key="query", label_visibility="collapsed",
+                           placeholder="e.g. quiet portable countertop ice maker under $150")
+    pressed = go.button("Search", type="primary", use_container_width=True)
     if st.session_state.get("result", {}).get("store", store) != store:
         st.session_state.pop("result", None)            # never show another shop's results
     if not query.strip():                               # an emptied request box clears the old results
@@ -287,7 +289,7 @@ with shop_tab:
         st.session_state.pop("last", None)
     key = (query, user_id, store)                       # a new request, shopper or shop searches right away;
     st.caption("Changed the number of suggestions or the optional limits? Press Search to update.")
-    if st.button("Search", type="primary") or (query.strip() and st.session_state.get("last") != key):
+    if pressed or (query.strip() and st.session_state.get("last") != key):
         if not query.strip():
             st.warning("Please type what you are looking for.")
         else:
