@@ -2,9 +2,11 @@
 
 Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | October 2026
 
-> **Status (30 Oct, final):** every number comes from `eval/results/` (API call counts from the call log). Every
-> product in every reported top 10 has a relevance label: sections 6–7 use the main labels (23 % human-checked); the
-> production extensions in section 12 add 33 LLM-only labels in a separate file (section 12.9).
+> **Status (30 Oct, final; deployment added 3 Nov):** every number comes from `eval/results/` (API call counts from
+> the call log). Every product in every reported top 10 has a relevance label: sections 6–7 use the main labels (23 %
+> human-checked); the production extensions in section 12 add 33 LLM-only labels in a separate file (section 12.9).
+> The app now runs as a [public demo](https://ai-shopping-concierge.streamlit.app/) and the API as a container image
+> on Docker Hub (section 11).
 
 ## 1. Summary
 
@@ -47,7 +49,8 @@ chat agent, and then extended toward production one change at a time, each chose
 | Cross-encoder re-ranker (12.10) | −0.012 [−0.038, +0.010]; 13–17 s per query on CPU | off |
 
 Again, several of these are neutral or negative and are reported as such; none of them changes the tables in sections
-6–7, which keep the evaluated configuration.
+6–7, which keep the evaluated configuration. Finally, the app was deployed as a public demo on Streamlit Community
+Cloud, where visitors use their own AI key, and the API as a container image on Docker Hub (section 11).
 
 ## 2. Problem
 
@@ -275,8 +278,9 @@ caps, retries, structured output and function calling behave the same for every 
 offline only; all reported results are Gemini results, and other models may parse and answer differently. One
 difference is known: the Claude adapter sends no temperature setting, so fresh calls are not strictly deterministic and repeatability comes from the response cache.
 
-**Hosted demo.** The Streamlit app also runs as a public demo on Streamlit Community Cloud, from the same code with one
-setting (`CONCIERGE_DEMO=1`). The demo shows only the Appliances catalog and the Chat, Shop and How it works tabs; the
+**Hosted demo and container image.** The Streamlit app runs as a public demo on Streamlit Community Cloud
+([ai-shopping-concierge.streamlit.app](https://ai-shopping-concierge.streamlit.app/), deployed 3 Nov), from the same
+code with one setting (`CONCIERGE_DEMO=1`). The demo shows only the Appliances catalog and the Chat, Shop and How it works tabs; the
 store-owner sections (imports, webhooks and their secrets, website connection, Claude Desktop) are hidden. No owner
 key is stored on the host. Without a key, visitors use *basic mode*: retrieval, ranking and personalization run with
 the app's production settings (section 12), hard filters come only from the filter controls (highest price, category,
@@ -285,7 +289,10 @@ uses), so no LLM call is made. With their own Gemini, OpenAI or Claude key, whic
 that browser session and never saved, logged or cached, they get the full parser, grounded answers and chat
 assistant. A smoke run on the real catalog in basic mode returned products for search and chat with zero LLM calls.
 The processed catalog and embeddings are committed for this purpose. The demo was checked for function only; the
-reported results are unchanged.
+reported results are unchanged. The API (with the widget, webhooks and demo store page) is published as the container
+image `maazamjad110/ai-shopping-concierge` on Docker Hub (about 3.5 GB, non-root, embedding model included; catalog,
+embeddings and stores mounted from outside); a local check showed it healthy, loading all 10,000 products and
+answering searches, falling back to catalog-only answers without a key.
 
 ## 12. Production improvements
 
@@ -512,6 +519,6 @@ tuned on shopping data, and a larger benchmark, would be needed to revisit this.
   (encrypted at rest, per-store call caps); a dashboard on the event data (click, save and Buy-click rates, assisted
   revenue from order webhooks against a holdout); a web front end replacing Streamlit.
 - **Platform.** A shared database and vector index (Postgres + pgvector) instead of files and in-memory search, so
-  several server copies can run; deployment on a free tier for a demo (Hugging Face Spaces) and on an always-on VM
-  for persistent stores and webhooks; a GPU or a re-ranker tuned on shopping data; lower generation latency (paid
+  several server copies can run; running the published container on an always-on server behind HTTPS for persistent
+  stores and webhooks (the demo is already hosted, section 11), with a slimmer image without the notebook packages; a GPU or a re-ranker tuned on shopping data; lower generation latency (paid
   tier, shorter output).
