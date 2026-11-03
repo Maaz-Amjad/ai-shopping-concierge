@@ -251,3 +251,20 @@ def test_search_queries_are_capped(tmp_path):
     res.client.transport = lambda model, prompt, *a: prompts.append(prompt) or next(answers)
     search_products("ice maker " + "x" * 5000, res)
     assert prompts and all(len(p) < 6000 for p in prompts)
+
+
+def test_weak_best_match_is_flagged_when_the_app_sets_a_cutoff(tmp_path):
+    # FakeModel encodes every query to [1, 0]: A has cosine 1.0, C (the only range hood) 0.0
+    res = resources(tmp_path, [gen(["A"]), gen(["C"], "One hood.")])
+    res.cfg = {**res.cfg, "app": {"weak_match_below": 0.7}}
+    strong = respond("ice maker", res, parsed=ParsedQuery(semantic_query="ice maker", category="Ice Makers"))
+    weak = respond("hood", res, parsed=ParsedQuery(semantic_query="hood", category="Range Hoods"))
+    assert strong.flags["weak_match"] is False and strong.flags["best_similarity"] == pytest.approx(1.0)
+    assert weak.flags["weak_match"] is True and weak.flags["best_similarity"] == pytest.approx(0.0)
+    assert weak.answer.text.startswith("One hood")                       # the answer itself is unchanged
+
+
+def test_no_weak_match_flag_without_a_cutoff(tmp_path):
+    res = resources(tmp_path, [gen(["C"], "One hood.")])                  # benchmark config: no app cutoff
+    out = respond("hood", res, parsed=ParsedQuery(semantic_query="hood", category="Range Hoods"))
+    assert out.flags["weak_match"] is False

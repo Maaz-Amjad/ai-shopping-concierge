@@ -356,3 +356,22 @@ def test_clear_button_empties_the_request_box_and_results(tmp_path, monkeypatch)
     assert not at.exception
     assert at.text_input(key="query").value == "" and not cards_shown(at) and not at.warning
     assert [b.label for b in at.button if b.key and b.key.startswith("recent-")] == ["ice maker"]   # history kept
+
+
+def test_a_weak_best_match_says_the_store_may_not_carry_it(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+
+    parsed = json.dumps({"semantic_query": "potato peeler", "category": "Range Hoods"})   # only C, cosine 0
+    res = resources(tmp_path, [parsed, gen(["C"], "One hood.")])
+    res.cfg = {**res.cfg, "app": {"weak_match_below": 0.7}}
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.text_input(key="query").set_value("potato peeler").run()
+    assert not at.exception
+    assert at.warning and "may not carry" in at.warning[0].value and "potato peeler" in at.warning[0].value
+    assert cards_shown(at)                                                   # the closest products stay visible
