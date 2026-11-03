@@ -215,7 +215,7 @@ def do_search(args: dict, message: str, state: ChatState, res: Resources, user_i
     state.limits, state.shown = Limits(**parsed.model_dump()), ids
     return TurnResult("search", out.answer.text, state, cards(ids, res, link, extra),
                       flags={"parse_log": log, "limits": parsed.model_dump(), **{k: view["flags"].get(k) for k in
-                             ("cold_start", "price_excluded", "generation_fallback")}})
+                             ("cold_start", "price_excluded", "generation_fallback", "weak_match")}})
 
 
 def _str_list(value: Any) -> list[str]:
@@ -401,7 +401,7 @@ def _plain_search(message: str, state: ChatState, res: Resources, user_id: str |
     state.limits = Limits(**out.parsed_query.model_dump())
     state.shown = out.ranked["product_id"].tolist()
     return TurnResult("search", out.answer.text, state, cards(state.shown, res, link, extra),
-                      flags={k: view["flags"].get(k) for k in ("cold_start", "price_excluded", "generation_fallback")})
+                      flags={k: view["flags"].get(k) for k in ("cold_start", "price_excluded", "generation_fallback", "weak_match")})
 
 
 def _dispatch(name: str, args: dict, message: str, state: ChatState, res: Resources, user_id: str | None, n: int,

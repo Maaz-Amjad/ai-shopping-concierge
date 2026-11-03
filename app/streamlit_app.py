@@ -237,7 +237,9 @@ with chat_tab:
 
     def remember(out) -> None:
         st.session_state["chat_state"] = out.state.model_dump()
-        st.session_state["chat_log"].append({"role": "assistant", "text": out.text, "products": out.products,
+        text = ("I may not have what you're looking for; these are the closest products in this store.\n\n"
+                if out.flags.get("weak_match") else "") + out.text           # weak best match (Phase 14)
+        st.session_state["chat_log"].append({"role": "assistant", "text": text, "products": out.products,
                                              "comparison": out.comparison, "link": out.link})
 
     top_left, top_right = st.columns([5, 1])
@@ -360,6 +362,9 @@ with shop_tab:
             st.caption(f"{flags['price_excluded']} matching products have no price listed, so they are not shown "
                        "while a price limit is set.")
 
+        if flags.get("weak_match"):                     # even the best product is a weak match (Phase 14)
+            st.warning(f"This store may not carry “{md(pq['semantic_query'])}”. These are the closest products it "
+                       "has; try describing it differently if they are not what you need.", icon="🤔")
         st.info(md(result["answer"]))
         if not result["products"]:
             st.caption("💡 Nothing matched every limit. Try removing one (the answer above suggests which), or "

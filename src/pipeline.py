@@ -129,6 +129,11 @@ def respond(query: str, res: Resources, user_id: str | None = None, n: int | Non
     timings["rank"] = (time.perf_counter() - t) * 1000
     flags.update(cold_start=user_vec is None, n_satisfying=result.n_satisfying,
                  price_excluded=result.price_excluded, n_unpriced=len(result.unpriced))
+    # Phase 14: the catalog probably lacks what was asked for when even the best shown product is weakly similar
+    # (raw cosine below app.weak_match_below, chosen on dev); a flag only, so answers and rankings are unchanged
+    best = float((res.embeddings[ranked["row"].to_numpy()] @ qvec).max()) if not ranked.empty else None
+    cutoff = (cfg.get("app") or {}).get("weak_match_below")
+    flags.update(best_similarity=best, weak_match=bool(cutoff is not None and best is not None and best < cutoff))
 
     t = time.perf_counter()
     if on_products is not None and not ranked.empty:

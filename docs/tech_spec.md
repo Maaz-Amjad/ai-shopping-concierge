@@ -483,4 +483,7 @@ only, no store-owner sections. Each browser session gets its own `LLMClient`: wi
 `max_calls = 0`, so the existing call-cap fallback (section 14) gives semantic-only parsing, filters from the UI and the
 template answer; with a key, `LLMClient(api_key=...)` passes it only to the provider SDK (never to the cache key, call
 log, files or page; switching provider clears it) and the owner's environment key is never read. `.gitignore` admits `data/processed/catalog.pkl`,
-`interactions.pkl`, `artifacts/embeddings.npy` and `product_ids.npy` so the host can load the catalog.
+`interactions.pkl`, `artifacts/embeddings.npy` and `product_ids.npy` so the host can load the catalog. Every result
+carries `best_similarity` (raw cosine of the best shown product) and `weak_match` (below `app.weak_match_below`,
+0.70, chosen on dev); the app then says the store may not carry the request. A flag only: rankings and answers are
+unchanged, and the benchmark configuration has no cut-off.
