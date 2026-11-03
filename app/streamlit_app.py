@@ -305,10 +305,12 @@ with shop_tab:
     for col, example in zip(cols, EXAMPLES):                # a callback runs before the page is redrawn, so the
         col.button(example, use_container_width=True,       # request box shows the example and it is searched
                    on_click=lambda text=example: st.session_state.update(query=text))
-    box, go = st.columns([6, 1], vertical_alignment="bottom")         # Search sits on the same row as the box
+    box, go, wipe = st.columns([6, 1, 1], vertical_alignment="bottom")   # Search and Clear sit beside the box
     query = box.text_input("Your request", key="query", label_visibility="collapsed",
                            placeholder="e.g. quiet portable countertop ice maker under $150")
     pressed = go.button("Search", type="primary", use_container_width=True)
+    wipe.button("Clear", key="clear_query", use_container_width=True, help="Empty the request box and the results",
+                on_click=lambda: st.session_state.update(query=""))
     if st.session_state.get("result", {}).get("store", store) != store:
         st.session_state.pop("result", None)            # never show another shop's results
     if not query.strip():                               # an emptied request box clears the old results
@@ -329,17 +331,15 @@ with shop_tab:
             recent = [q for q in st.session_state.get("recent", []) if q != query.strip()]
             st.session_state["recent"] = [query.strip()] + recent[:MAX_RECENT - 1]   # this browser session only
 
-    if st.session_state.get("recent"):                  # the session's searches, newest first: ✕ removes one, a click
-        with st.container(horizontal=True, vertical_alignment="center", gap="small", wrap=True):   # searches again
+    if st.session_state.get("recent"):                  # the session's searches, newest first; a click searches again
+        with st.container(horizontal=True, vertical_alignment="center", gap="small", wrap=True):
             st.caption("Recent:")
+            st.button("", key="forget_recent", icon=":material/close:", width="content",   # one ✕: each click
+                      help="Remove the newest search from this list (click again for the next)",  # removes one
+                      on_click=lambda: st.session_state.update(recent=st.session_state["recent"][1:]))
             for i, text in enumerate(st.session_state["recent"]):
-                with st.container(horizontal=True, vertical_alignment="center", gap=None, width="content"):
-                    st.button("", key=f"forget-{i}", icon=":material/close:", type="tertiary", width="content",
-                              help="Remove from recent searches",
-                              on_click=lambda t=text: st.session_state.update(
-                                  recent=[q for q in st.session_state["recent"] if q != t]))
-                    st.button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
-                              width="content", on_click=lambda t=text: st.session_state.update(query=t))
+                st.button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
+                          width="content", on_click=lambda t=text: st.session_state.update(query=t))
 
     result = st.session_state.get("result")
     if not result:                                      # first visit: how to get good results
@@ -373,7 +373,10 @@ with shop_tab:
                     left.caption(" · ".join(md(x) for x in [p["brand"], p["category"]] if x))
                     if p.get("reason"):
                         left.markdown(f"💡 **Why it fits:** {md(p['reason'])}")
-                    right.markdown(f"### {md(money(p['price']))}")              # price first, then rating
+                    if p["price"] is None:                                      # price first, then rating
+                        right.caption("Price not listed")
+                    else:
+                        right.markdown(f"### {md(money(p['price']))}")
                     if stars(p):
                         right.markdown(md(stars(p)))
                     match = min(max(p["final"], 0.0), 1.0)
