@@ -1,6 +1,7 @@
 """Streamlit demo, headless (AppTest) on the toy catalog with a fake LLM: search, shopper switch, escaping."""
 
 import json
+from dataclasses import replace
 
 import pandas as pd
 import streamlit as st
@@ -375,3 +376,29 @@ def test_a_weak_best_match_says_the_store_may_not_carry_it(tmp_path, monkeypatch
     assert not at.exception
     assert at.warning and "may not carry" in at.warning[0].value and "potato peeler" in at.warning[0].value
     assert cards_shown(at)                                                   # the closest products stay visible
+
+
+def test_a_config_change_reaches_the_running_app_without_a_restart(tmp_path, monkeypatch):
+    # 3 Nov: the hosted app kept the catalog it had cached with the old config, so a new app setting
+    # (weak_match_below) never took effect after a push
+    import src
+    from src import data, pipeline, store
+    from test_pipeline import CFG
+
+    parsed = json.dumps({"semantic_query": "potato peeler", "category": "Range Hoods"})   # only C, cosine 0
+    base = resources(tmp_path, [parsed, gen(["C"], "One hood."), parsed, gen(["C"], "One hood.")])
+    config = {**CFG, "app": {}}
+    monkeypatch.setattr(src, "load_config", lambda: config)
+    monkeypatch.setattr(pipeline, "load_resources", lambda cfg, *a, **k: replace(base, cfg=cfg))
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.text_input(key="query").set_value("potato peeler").run()
+    assert not at.warning                                                    # no cut-off configured yet
+    config = {**CFG, "app": {"weak_match_below": 0.7}}                       # the config changes (a deploy)
+    at.button(key="clear_query").click().run()
+    at.text_input(key="query").set_value("potato peeler").run()
+    assert not at.exception and at.warning and "may not carry" in at.warning[0].value
