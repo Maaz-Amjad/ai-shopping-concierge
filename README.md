@@ -10,7 +10,7 @@
 [![Gemini](https://img.shields.io/badge/LLM-Gemini%20%7C%20OpenAI%20%7C%20Claude-4285F4?logo=google&logoColor=white)](#-configuration-reference)
 [![Embeddings](https://img.shields.io/badge/Embeddings-BGE--small-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/BAAI/bge-small-en-v1.5)
 [![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](#-mcp-server-for-ai-agents)
-[![Tests](https://img.shields.io/badge/tests-312%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
+[![Tests](https://img.shields.io/badge/tests-315%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
 
 *Ask for "a quiet countertop ice maker under $150" and get products that really are under $150, ranked for you,
 explained only with facts from the catalog.*
@@ -199,7 +199,7 @@ Notebooks import from `src/` and run with an LLM call budget of zero (cached ans
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Linux/macOS: .venv/bin/python
 cp .env.example .env                                                   # then add your key after GEMINI_API_KEY=
-.venv/Scripts/python.exe -m pytest -q                                  # 312 passed in a fresh clone, no API calls
+.venv/Scripts/python.exe -m pytest -q                                  # 315 passed in a fresh clone, no API calls
 ```
 
 ### Get the data and build the index
@@ -414,7 +414,7 @@ All versions are pinned in [requirements.txt](requirements.txt).
 ## 🧪 Testing
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q      # 312 passed
+.venv/Scripts/python.exe -m pytest -q      # 315 passed
 ```
 
 | Area | Test files |

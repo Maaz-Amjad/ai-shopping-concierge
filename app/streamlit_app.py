@@ -49,6 +49,7 @@ FIELD_QUESTIONS = {"product_id": "Which column is the product's code or ID?", "t
                    "in_stock": "Which column says whether it is in stock (optional)?"}
 NONE = "— not in my file —"
 DEMO_MODE = os.environ.get("CONCIERGE_DEMO", "").strip() == "1"     # hosted demo (Phase 14)
+MAX_RECENT = 5                                                      # recent searches shown in the Shop tab
 KEY_PROVIDERS = {"Google Gemini": "gemini", "OpenAI (ChatGPT)": "openai", "Anthropic (Claude)": "anthropic"}
 DEFAULT_MODELS = {"openai": "", "anthropic": "claude-haiku-5-5"}      # gemini: config llm.model
 
@@ -274,16 +275,19 @@ with shop_tab:
                   "AI key there to have them read from your words)." if basic else ""))
     st.write("Try one:")
     cols = st.columns(len(EXAMPLES))
-    for col, example in zip(cols, EXAMPLES):
-        if col.button(example, use_container_width=True):
-            st.session_state["query"] = example
+    for col, example in zip(cols, EXAMPLES):                # a callback runs before the page is redrawn, so the
+        col.button(example, use_container_width=True,       # request box shows the example and it is searched
+                   on_click=lambda text=example: st.session_state.update(query=text))
     query = st.text_input("Your request", key="query", label_visibility="collapsed",
                           placeholder="e.g. quiet portable countertop ice maker under $150")
     if st.session_state.get("result", {}).get("store", store) != store:
         st.session_state.pop("result", None)            # never show another shop's results
+    if not query.strip():                               # an emptied request box clears the old results
+        st.session_state.pop("result", None)
+        st.session_state.pop("last", None)
     key = (query, user_id, store)                       # a new request, shopper or shop searches right away;
     st.caption("Changed the number of suggestions or the optional limits? Press Search to update.")
-    if st.button("Search", type="primary") or (query and st.session_state.get("last") != key):
+    if st.button("Search", type="primary") or (query.strip() and st.session_state.get("last") != key):
         if not query.strip():
             st.warning("Please type what you are looking for.")
         else:
@@ -293,6 +297,15 @@ with shop_tab:
                                       category=None if f_cat == "Any" else f_cat,
                                       brand=None if f_brand == "Any" else f_brand)
             st.session_state["result"] = {**result_to_dict(query, out, res), "store": store}
+            recent = [q for q in st.session_state.get("recent", []) if q != query.strip()]
+            st.session_state["recent"] = [query.strip()] + recent[:MAX_RECENT - 1]   # this browser session only
+
+    if st.session_state.get("recent"):                  # the session's searches, newest first; a click searches again
+        cols = st.columns([1] + [3] * MAX_RECENT)
+        cols[0].caption("Recent:")
+        for i, (col, text) in enumerate(zip(cols[1:], st.session_state["recent"])):
+            col.button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
+                       use_container_width=True, on_click=lambda t=text: st.session_state.update(query=t))
 
     result = st.session_state.get("result")
     if result:
