@@ -118,3 +118,35 @@ def test_sdk_connection_errors_are_retried(tmp_path):
     c = LLMClient("m", tmp_path / "c.jsonl", tmp_path / "l.jsonl", rpm=1e9, transport=transport,
                   sleep=lambda s: None, provider="openai")
     assert c.generate("q", "v1") == "fine" and c.calls_made == 2
+
+
+# ---- Phase 14: a visitor's own key (hosted demo) ------------------------------------------------------------
+
+def test_a_visitor_key_goes_to_each_sdk_instead_of_the_environment_key(tmp_path, monkeypatch):
+    from google import genai
+
+    seen = {}
+
+    class FakeGenai:
+        def __init__(self, **kw):
+            seen["gemini"] = kw.get("api_key")
+            self.models = NS(generate_content=lambda **k: NS(text='{"summary": "ok"}'))
+
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(genai, "Client", FakeGenai)
+    monkeypatch.setenv("GEMINI_API_KEY", "owner-key")
+    client(tmp_path, "gemini", api_key="visitor-gemini").generate_json("p1", "v1", Reply)
+    client(tmp_path, "openai", api_key="visitor-openai").generate_json("p2", "v1", Reply)
+    client(tmp_path, "anthropic", api_key="visitor-claude").generate_json("p3", "v1", Reply)
+    assert seen["gemini"] == "visitor-gemini"
+    assert FakeOpenAI.calls[0] == ("init", {**FakeOpenAI.calls[0][1], "api_key": "visitor-openai"})
+    assert FakeAnthropic.calls[0] == ("init", {**FakeAnthropic.calls[0][1], "api_key": "visitor-claude"})
+
+
+def test_a_visitor_key_is_never_written_to_the_cache_or_call_log(tmp_path):
+    c = client(tmp_path, "openai", api_key="sk-visitor-secret-123")
+    c.generate_json("p", "v1", Reply)
+    c.generate_tool_call("q", "v1", TOOLS)
+    for name in ("c.jsonl", "l.jsonl"):
+        assert "sk-visitor-secret-123" not in (tmp_path / name).read_text(encoding="utf-8")
+    assert "sk-visitor-secret-123" not in repr(vars(c))       # not kept as a plain attribute either

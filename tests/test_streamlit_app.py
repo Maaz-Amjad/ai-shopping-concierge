@@ -152,3 +152,71 @@ def test_instant_updates_section_shows_webhook_urls(tmp_path, monkeypatch):
     assert not at.exception
     codes = [c.value for c in at.code]
     assert "https://assistant.example.com/webhooks/shop1/shopify" in codes and "s" * 40 in codes
+
+
+# ---- Phase 14: hosted demo (CONCIERGE_DEMO=1) ---------------------------------------------------------------
+
+def demo_app(tmp_path, monkeypatch, parse_and_answers=(), tool_calls=()):
+    """Demo-mode app on the toy catalog. Real LLMClients are built by the app, so the provider transports are faked
+    (recording the key they were given); the LLM cache and log go to tmp_path."""
+    from src import data, llm, pipeline, store
+
+    res = resources(tmp_path, [])
+    res.cfg = {**res.cfg, "llm": {"model": "m", "cache_path": str(tmp_path / "cache.jsonl"),
+                                  "call_log_path": str(tmp_path / "calls.jsonl"), "rpm": 1e9, "temperature": 0,
+                                  "max_output_tokens": 400}}
+    calls, answers, tools = [], iter(parse_and_answers), iter(tool_calls)
+
+    def fake_transports_for(provider="gemini", base_url=None, api_key_env=None, api_key=None):
+        def transport(*a):
+            calls.append((provider, api_key))
+            return next(answers)
+
+        def tool_transport(*a):
+            calls.append((provider, api_key))
+            return json.dumps(next(tools))
+        return transport, tool_transport
+
+    monkeypatch.setenv("CONCIERGE_DEMO", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "owner-key")
+    monkeypatch.setattr(llm, "transports_for", fake_transports_for)
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: (_ for _ in ()).throw(AssertionError("stores listed")))
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    return AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run(), calls
+
+
+def test_demo_mode_hides_the_store_owner_sections(tmp_path, monkeypatch):
+    at, _ = demo_app(tmp_path, monkeypatch)
+    assert not at.exception
+    assert [t.label for t in at.tabs] == ["💬 Chat", "🔎 Shop", "ℹ️ How it works"]
+    assert "Shop" not in [s.label for s in at.sidebar.selectbox]                    # demo catalog only
+    labels = [b.label for b in at.button]
+    assert not any("Claude Desktop" in b or "connection" in b or "Update products" in b for b in labels)
+    assert not at.code                                                               # no widget code, no secrets
+
+
+def test_demo_without_a_key_makes_no_llm_call(tmp_path, monkeypatch):
+    at, calls = demo_app(tmp_path, monkeypatch)
+    at.text_input(key="query").set_value("ice maker").run()
+    assert not at.exception and any(m.value.startswith("**1.") for m in at.markdown)   # results still shown
+    at.chat_input[0].set_value("I need an ice maker").run()
+    assert not at.exception and any(m.value.startswith("**1.") for m in at.markdown)
+    assert calls == []                                                               # owner key never used
+
+
+def test_demo_uses_the_visitors_key_for_their_session_and_never_shows_it(tmp_path, monkeypatch):
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    at, calls = demo_app(tmp_path, monkeypatch, [parsed, gen(["A", "B"])])
+    at.text_input(key="visitor_key").set_value("visitor-key-123").run()
+    at.text_input(key="query").set_value("ice maker").run()
+    assert not at.exception
+    assert calls and set(calls) == {("gemini", "visitor-key-123")}
+    assert "`category: Ice Makers`" in " ".join(m.value for m in at.markdown)        # the LLM parse was used
+    shown = " ".join(e.value for e in [*at.markdown, *at.caption, *at.info, *at.code] if isinstance(e.value, str))
+    assert "visitor-key-123" not in shown
+    for name in ("cache.jsonl", "calls.jsonl"):
+        assert "visitor-key-123" not in (tmp_path / name).read_text(encoding="utf-8")
