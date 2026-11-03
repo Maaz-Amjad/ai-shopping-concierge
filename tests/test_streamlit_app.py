@@ -285,3 +285,17 @@ def test_clearing_the_request_clears_the_results(tmp_path, monkeypatch):
     assert not at.exception
     assert not cards_shown(at) and not at.info                # old results and answer are gone
     assert not at.warning                                     # clearing is not an error
+
+
+def test_recent_searches_are_listed_under_the_box_and_search_again(tmp_path, monkeypatch):
+    p1 = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    p2 = json.dumps({"semantic_query": "range hood"})
+    at = shop_app(tmp_path, monkeypatch, [p1, gen(["A", "B"]), p2, gen(["C"], "One hood.")])
+    at.text_input(key="query").set_value("ice maker").run()
+    at.text_input(key="query").set_value("range hood").run()
+    recent = [b for b in at.button if b.key and b.key.startswith("recent-")]
+    assert [b.label for b in recent] == ["range hood", "ice maker"]               # newest first, this session only
+    next(b for b in recent if b.label == "ice maker").click().run()               # answered from the LLM cache
+    assert not at.exception
+    assert at.text_input(key="query").value == "ice maker" and cards_shown(at)
+    assert [b.label for b in at.button if b.key and b.key.startswith("recent-")] == ["ice maker", "range hood"]
