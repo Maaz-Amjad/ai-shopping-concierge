@@ -218,8 +218,8 @@ judged-only metrics for unpooled comparisons; S6 items judged in separate batche
 compatibility wording and user-named brands; the error-analysis tag *catalog gap* also covers "fewer than 10 products
 satisfy the parsed limits" (no missing-description check, because cleaning already drops near-empty listings); rendered titles shortened to 10
 words; Streamlit and MCP wrapper first cut (pre-agreed cut list), then built after the evaluation was complete, together
-with a store connector, a chat assistant and other LLM providers (section 11, approved additions); the production
-extensions of section 12 (approved 29–30 Oct), which use separate settings (`app.ranking`, `app.retrieval`) so the
+with a store connector, a chat assistant and other LLM providers (section 11, additions decided during the build); the production
+extensions of section 12 (decided 29–30 Oct), which use separate settings (`app.ranking`, `app.retrieval`) so the
 evaluated configuration is unchanged, and whose extra relevance labels are kept apart from the main labels.
 
 ## 10. Reproducibility
@@ -229,7 +229,7 @@ by (model, prompt version, schema, settings, prompt). All reported tables are re
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
 `04_evaluation` (which run with an LLM call budget of zero); the section 12 results by `python -m src.evaluate
 rating|adaptive|hybrid|rerank --split dev|test` (add `--completed` for section 12.9) and the chat evaluation by
-`python -m src.agent --limit 0`. 304 unit and integration tests run offline with a fake client.
+`python -m src.agent --limit 0`. 312 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -274,6 +274,18 @@ open-weight models served by Ollama, vLLM or LM Studio) and Anthropic's Claude, 
 caps, retries, structured output and function calling behave the same for every provider. The adapters are tested
 offline only; all reported results are Gemini results, and other models may parse and answer differently. One
 difference is known: the Claude adapter sends no temperature setting, so fresh calls are not strictly deterministic and repeatability comes from the response cache.
+
+**Hosted demo.** The Streamlit app also runs as a public demo on Streamlit Community Cloud, from the same code with one
+setting (`CONCIERGE_DEMO=1`). The demo shows only the Appliances catalog and the Chat, Shop and How it works tabs; the
+store-owner sections (imports, webhooks and their secrets, website connection, Claude Desktop) are hidden. No owner
+key is stored on the host. Without a key, visitors use *basic mode*: retrieval, ranking and personalization run with
+the app's production settings (section 12), hard filters come only from the filter controls (highest price, category,
+brand; no exclusions or minimum price), and the answer is the catalog-field template (the same fallback the call cap
+uses), so no LLM call is made. With their own Gemini, OpenAI or Claude key, which is kept only in
+that browser session and never saved, logged or cached, they get the full parser, grounded answers and chat
+assistant. A smoke run on the real catalog in basic mode returned products for search and chat with zero LLM calls.
+The processed catalog and embeddings are committed for this purpose. The demo was checked for function only; the
+reported results are unchanged.
 
 ## 12. Production improvements
 

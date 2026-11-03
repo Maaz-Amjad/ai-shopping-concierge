@@ -445,9 +445,9 @@ Products: [batched product fields]
 ```
 
 
-## Appendix B: Implementation addendum (27–30 October 2026)
+## Appendix B: Implementation addendum (27 October – 3 November 2026)
 
-Approved changes made after the core evaluation; the evaluated configuration in sections 6–10 is unchanged, and the
+Changes decided after the core evaluation; the evaluated configuration in sections 6–10 is unchanged, and the
 production settings live under `app:` in `config.yaml`. Results: [final report](final_report.md) sections 11–12.
 
 **B.1 Production scoring.** `app.ranking` adds a fourth term, `w_rat · S_rat`, with S_rat the min-max normalized
@@ -477,3 +477,10 @@ days, the product, the action and the time, for one year.
 **B.6 Evaluation additions (section 10).** Each change was pre-registered (grid and rule written before results),
 chosen on dev, and reported once on test with paired bootstrap intervals; 33 products surfaced only by the new
 rankings were graded by the same LLM judge into a separate label file, so the main labels are unchanged.
+
+**B.7 Hosted demo (decided 3 November).** `CONCIERGE_DEMO=1` runs the Streamlit app as a public demo: demo catalog
+only, no store-owner sections. Each browser session gets its own `LLMClient`: without a visitor key it has
+`max_calls = 0`, so the existing call-cap fallback (section 14) gives semantic-only parsing, filters from the UI and the
+template answer; with a key, `LLMClient(api_key=...)` passes it only to the provider SDK (never to the cache key, call
+log, files or page; switching provider clears it) and the owner's environment key is never read. `.gitignore` admits `data/processed/catalog.pkl`,
+`interactions.pkl`, `artifacts/embeddings.npy` and `product_ids.npy` so the host can load the catalog.

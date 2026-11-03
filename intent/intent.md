@@ -1,5 +1,5 @@
 # Intent: Semantic product discovery & shopping concierge
-Author: Maaz Amjad (atomcamp AI Bootcamp, NLP/LLM track). Status: accepted 2026-10-26; revised 2026-10-30 (see Revisions).
+Author: Maaz Amjad (atomcamp AI Bootcamp, NLP/LLM track). Status: accepted 2026-10-26; revised 2026-10-30 and 2026-11-03 (see Revisions).
 
 ## Problem
 Keyword search misses products described in different words, does not reliably
@@ -25,7 +25,7 @@ Deadline 28 Oct 2026 23:59 PKT. Gemini free tier only (tight daily quotas),
 temperature 0, all LLM calls cached. No personal data sent; keys never committed.
 Tune on dev queries only; report on test only. Spec docs are the source of truth.
 
-## Revisions (27–30 Oct 2026)
+## Revisions (27 Oct – 3 Nov 2026)
 
 **Constraints changed.** Deadline moved from 28 to 30 Oct 2026. The relevance judge's free-tier quota (20 requests a
 day, failed requests count) was enough with waiting between quota resets; billing was not enabled.
@@ -35,7 +35,8 @@ NDCG@10, 100 % constraint adherence, 0 invented product IDs; filter-first vs pos
 relevance cost were reported as neutral and negative findings ([final report](../docs/final_report.md), sections 1–10).
 
 **Intent widened (decided during the build).** From a research prototype to a store-ready concierge
-that a non-technical store owner can plug in: a no-code demo app, REST API and website chat bubble, MCP server, store
+that a non-technical store owner can plug in: a no-code demo app (also hosted publicly, where visitors bring their own
+AI key), REST API and website chat bubble, MCP server, store
 connector (Shopify, WooCommerce, any CSV/JSON), a conversational agent that can refine, compare, shortlist and hand
 off to the store (never placing orders), any LLM provider, and production extensions (ratings, stock, store updates by
 refresh and signed webhooks, hybrid retrieval, faster replies, shopper events, API hardening). The original success
@@ -51,7 +52,7 @@ OpenAI-compatible and Anthropic APIs, Docker.
 **Open questions, answered.** Judge quota: sufficient with waits, no billing. Report format: Markdown report in the
 repository, notebooks and README. Still open: the slide format atomcamp expects and the presentation date.
 
-## Next intent (after submission; to be planned and approved first)
+## Next intent (after submission; to be planned and decided first)
 
 Turn the prototype into a multi-store product: user accounts with one workspace per store; store owners bring their
 own LLM and webhook keys (encrypted, with per-store call caps); a dashboard showing how the assistant changes shopping

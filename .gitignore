@@ -3,11 +3,17 @@
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 
 # Data, caches, model artifacts
-artifacts/
+# (the hosted demo needs the processed catalog and its embeddings; caches, logs and raw data stay out)
+artifacts/*
+!artifacts/embeddings.npy
+!artifacts/product_ids.npy
 data/raw/
-data/processed/
+data/processed/*
+!data/processed/catalog.pkl
+!data/processed/interactions.pkl
 stores/
 __pycache__/
 .pytest_cache/

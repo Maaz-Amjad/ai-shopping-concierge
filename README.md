@@ -10,7 +10,7 @@
 [![Gemini](https://img.shields.io/badge/LLM-Gemini%20%7C%20OpenAI%20%7C%20Claude-4285F4?logo=google&logoColor=white)](#-configuration-reference)
 [![Embeddings](https://img.shields.io/badge/Embeddings-BGE--small-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/BAAI/bge-small-en-v1.5)
 [![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](#-mcp-server-for-ai-agents)
-[![Tests](https://img.shields.io/badge/tests-304%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
+[![Tests](https://img.shields.io/badge/tests-312%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
 
 *Ask for "a quiet countertop ice maker under $150" and get products that really are under $150, ranked for you,
 explained only with facts from the catalog.*
@@ -167,7 +167,7 @@ on test. **Decision:** reverted or switched off, and documented in the [final re
 | [📄 Requirements](docs/requirements.md) | Goals, success criteria, functional and non-functional requirements, scope |
 | [🛠 Technical specification](docs/tech_spec.md) | Architecture, data design, retrieval, ranking, grounding, evaluation design, interfaces |
 | [📊 Final report](docs/final_report.md) | Results, ablations, personalization experiments, error analysis, limitations, production extensions |
-| [📝 Proposal](docs/proposal.pdf) | The approved project proposal |
+| [📝 Proposal](docs/proposal.pdf) | The project proposal |
 | [🎯 Intent](intent/intent.md) | Problem, outcome, users and constraints (planning stage) |
 
 | Notebook | What it shows |
@@ -199,10 +199,14 @@ Notebooks import from `src/` and run with an LLM call budget of zero (cached ans
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Linux/macOS: .venv/bin/python
 cp .env.example .env                                                   # then add your key after GEMINI_API_KEY=
-.venv/Scripts/python.exe -m pytest -q                                  # 304 passed in a fresh clone, no API calls
+.venv/Scripts/python.exe -m pytest -q                                  # 312 passed in a fresh clone, no API calls
 ```
 
 ### Get the data and build the index
+
+The processed catalog (`data/processed/catalog.pkl`, `interactions.pkl`) and its embeddings
+(`artifacts/embeddings.npy`, `product_ids.npy`) are included in the repository, so the app and API run right after
+installing. The steps below rebuild them from the raw Amazon files:
 
 ```bash
 B=https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main
@@ -224,6 +228,9 @@ and 2"), find similar items, keep a shortlist and open the product page to buy (
 single-shot search with the enforced limits, score components and the grounded answer. **Add your store** imports a
 store, turns the website connection on and off, keeps products up to date and connects Claude Desktop, all with
 buttons.
+
+Set `CONCIERGE_DEMO=1` to run the app as the public demo (see [Hosted demo](#hosted-demo-streamlit-community-cloud)):
+only the demo catalog, **Chat**, **Shop** and **How it works**; no LLM call unless a visitor adds their own key.
 
 ---
 
@@ -337,7 +344,8 @@ ai-shopping-concierge/
 ├── config.yaml          all settings (seed 42, models, weights, app settings)
 ├── requirements.txt     pinned dependencies (CPU-only torch)
 ├── Dockerfile           API container (non-root, model baked in, offline at run time)
-└── data/ · artifacts/ · stores/   downloaded data, embeddings and caches, imported stores (not committed)
+└── data/ · artifacts/ · stores/   processed catalog + embeddings (committed); raw downloads, LLM cache, logs and
+                                   imported stores (not committed)
 ```
 
 | Module | Responsibility |
@@ -386,6 +394,7 @@ ai-shopping-concierge/
 | `CONCIERGE_ALLOWED_ORIGINS` | Comma-separated allowed origins (overrides config) |
 | `CONCIERGE_API_KEY` | API key for the demo catalog when keys are required |
 | `CONCIERGE_STORE` | Store used by the MCP server |
+| `CONCIERGE_DEMO=1` | Run the Streamlit app as the public demo: owner sections hidden, visitors bring their own key |
 | `HF_HUB_OFFLINE=1` | Use the cached embedding model without a network check |
 
 ### Dependencies
@@ -405,7 +414,7 @@ All versions are pinned in [requirements.txt](requirements.txt).
 ## 🧪 Testing
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q      # 304 passed
+.venv/Scripts/python.exe -m pytest -q      # 312 passed
 ```
 
 | Area | Test files |
@@ -460,9 +469,36 @@ docker run --rm -p 127.0.0.1:8000:8000 --env-file .env \
 
 The image runs as a non-root user, contains the embedding model and starts without network checks; data, embeddings,
 caches and stores stay on mounted volumes. For a public deployment put an HTTPS reverse proxy in front, set
-`app.trust_proxy: true` and add the store's domain to the allowed origins. Free-tier options: Hugging Face Spaces
-(Docker) for a demo, or an always-free VM for persistent stores and webhooks. The Dockerfile has not yet been built
-on the development machine.
+`app.trust_proxy: true` and add the store's domain to the allowed origins. For persistent stores and webhooks, run
+the image on a server with its own disk (for example an always-free VM); Hugging Face Docker Spaces now need a paid
+plan and lose their files on restart.
+
+### Hosted demo (Streamlit Community Cloud)
+
+The public demo runs the same code with `CONCIERGE_DEMO=1`:
+
+| | Basic (no key, the default) | Full (the visitor's own key) |
+|---|---|---|
+| Finding and ranking products | ✅ same retrieval, limits and personalization | ✅ |
+| Limits typed in the request ("under $50", "not stainless") | not read; highest price, category and brand can be set with *Narrow it down* (no exclusions or minimum price) | ✅ read by the LLM, enforced in Python |
+| Answer | built from catalog fields | written by the LLM, checked by the grounding validator |
+| Chat | each message is a plain search; Save / Similar / Buy work | full assistant (refine, compare, shortlist) |
+| Cost | none: no LLM call | billed to the visitor's account |
+
+- The visitor picks Gemini, OpenAI or Claude, a model and a key in the sidebar. The key stays in that browser
+  session only: it goes to the chosen provider and is never saved, logged, cached or shown; switching provider clears
+  it. A wrong or expired key falls back to basic answers, with a note under *Details for the curious*.
+- Visitors see only the error type, never a traceback, if something fails.
+- No owner key is stored on the host, so it cannot be used. The *Add your store* tab (imports, webhooks and their
+  secrets, website connection, Claude Desktop) and the shop picker are hidden.
+- Deploy: on [share.streamlit.io](https://share.streamlit.io) choose *Create app*, repository
+  `Maaz-Amjad/ai-shopping-concierge`, branch `main`, file `app/streamlit_app.py`; under *Advanced settings* pick
+  Python 3.12 and add the secret `CONCIERGE_DEMO = "1"` (root-level secrets become environment variables).
+- `.streamlit/config.toml` binds the app to `localhost` for local safety. If the hosted app does not come up, add
+  the secret `STREAMLIT_SERVER_ADDRESS = "0.0.0.0"` (environment variables override the config file).
+- Limits: whether the free host has enough memory for torch, the model and the catalog is only known once deployed;
+  the per-model rate limit (`llm.rpm`) is shared by all visitors; the host's LLM cache holds visitors' understood
+  requests until it restarts.
 
 ---
 
@@ -498,7 +534,8 @@ on the development machine.
 ## 📜 Data, Credits & License
 
 Amazon Reviews 2023 (McAuley Lab): Hou et al., *Bridging Language and Items for Retrieval and Recommendation*, 2024,
-used for academic, non-commercial purposes. Embeddings: [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5).
+used for academic, non-commercial purposes. The processed 10,000-product catalog, the anonymized interactions and
+their embeddings are included in this repository for the hosted demo, under the dataset's terms. Embeddings: [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5).
 LLM: Google Gemini API. No license file is included: the code is © Maaz Amjad, shared for the atomcamp bootcamp
 assessment; the dataset remains under its own terms.
 

@@ -45,14 +45,15 @@ class CallLimitReached(RuntimeError):
 
 
 def gemini_transport(model: str, prompt: str, schema: type[BaseModel] | None,
-                     temperature: float, max_output_tokens: int) -> str:
-    """Call the Gemini API once and return the response text."""
+                     temperature: float, max_output_tokens: int, api_key: str | None = None) -> str:
+    """Call the Gemini API once and return the response text (`api_key`: a visitor's own key, else .env's)."""
     from dotenv import load_dotenv
     from google import genai
     from google.genai import types
 
-    load_dotenv(ROOT / ".env")
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+    if not api_key:                                 # a visitor's own key: .env is not even read
+        load_dotenv(ROOT / ".env")
+    client = genai.Client(api_key=api_key or os.environ["GEMINI_API_KEY"],
                           http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
     config = types.GenerateContentConfig(
         temperature=temperature,
@@ -65,15 +66,16 @@ def gemini_transport(model: str, prompt: str, schema: type[BaseModel] | None,
 
 
 def gemini_tool_transport(model: str, prompt: str, tools: list[dict], temperature: float,
-                          max_output_tokens: int) -> str:
+                          max_output_tokens: int, api_key: str | None = None) -> str:
     """Call Gemini with function declarations and force exactly one function call (mode ANY, never executed by the
     SDK). Returns JSON text {"name": ..., "args": {...}}; the caller validates and runs it."""
     from dotenv import load_dotenv
     from google import genai
     from google.genai import types
 
-    load_dotenv(ROOT / ".env")
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"],
+    if not api_key:
+        load_dotenv(ROOT / ".env")
+    client = genai.Client(api_key=api_key or os.environ["GEMINI_API_KEY"],
                           http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
     declarations = [types.FunctionDeclaration(name=t["name"], description=t["description"],
                                               parameters_json_schema=t["parameters"]) for t in tools]
@@ -94,7 +96,9 @@ def gemini_tool_transport(model: str, prompt: str, tools: list[dict], temperatur
 # Same contract as the Gemini transports: plain/structured text, or one forced tool call as {"name", "args"} JSON.
 # The SDK's own retries are off (max_retries=0): LLMClient retries, caps and logs every real call itself.
 
-def _api_key(env: str | None, required: bool = True) -> str:
+def _api_key(env: str | None, required: bool = True, given: str | None = None) -> str:
+    if given:                                       # a visitor's own key (hosted demo): never read from .env
+        return given
     from dotenv import load_dotenv
 
     load_dotenv(ROOT / ".env")
@@ -104,13 +108,14 @@ def _api_key(env: str | None, required: bool = True) -> str:
     return key or "not-needed"                      # local open-weight servers usually need no key
 
 
-def openai_transports(base_url: str | None = None, api_key_env: str | None = "OPENAI_API_KEY"):
+def openai_transports(base_url: str | None = None, api_key_env: str | None = "OPENAI_API_KEY",
+                      api_key: str | None = None):
     """ChatGPT, or any OpenAI-compatible server for open-weight models (Ollama, vLLM, LM Studio, Groq, Together...)
     when `base_url` is set, e.g. http://localhost:11434/v1 for Ollama."""
     def client():
         from openai import OpenAI
 
-        return OpenAI(api_key=_api_key(api_key_env, required=base_url is None), base_url=base_url,
+        return OpenAI(api_key=_api_key(api_key_env, required=base_url is None, given=api_key), base_url=base_url,
                       timeout=REQUEST_TIMEOUT_MS / 1000, max_retries=0)
 
     def transport(model: str, prompt: str, schema: type[BaseModel] | None, temperature: float,
@@ -136,13 +141,15 @@ def openai_transports(base_url: str | None = None, api_key_env: str | None = "OP
     return transport, tool_transport
 
 
-def anthropic_transports(base_url: str | None = None, api_key_env: str | None = "ANTHROPIC_API_KEY"):
+def anthropic_transports(base_url: str | None = None, api_key_env: str | None = "ANTHROPIC_API_KEY",
+                         api_key: str | None = None):
     """Claude. Structured output uses a forced tool whose input schema is the expected JSON. The current API takes no
     temperature, so repeatability on Claude comes from the response cache."""
     def client():
         from anthropic import Anthropic
 
-        return Anthropic(api_key=_api_key(api_key_env), base_url=base_url, timeout=REQUEST_TIMEOUT_MS / 1000,
+        return Anthropic(api_key=_api_key(api_key_env, given=api_key), base_url=base_url,
+                         timeout=REQUEST_TIMEOUT_MS / 1000,
                          max_retries=0)
 
     def first_tool_use(response):
@@ -176,14 +183,19 @@ def anthropic_transports(base_url: str | None = None, api_key_env: str | None = 
 PROVIDERS = ("gemini", "openai", "anthropic")
 
 
-def transports_for(provider: str = "gemini", base_url: str | None = None, api_key_env: str | None = None):
-    """(transport, tool_transport) for a provider named in config.yaml (llm.provider)."""
+def transports_for(provider: str = "gemini", base_url: str | None = None, api_key_env: str | None = None,
+                   api_key: str | None = None):
+    """(transport, tool_transport) for a provider named in config.yaml (llm.provider). `api_key` (hosted demo: a
+    visitor's own key) is used instead of the environment's; it lives only inside the returned transports."""
     if provider == "gemini":
+        if api_key:                     # closures, not functools.partial: a partial's repr would show the key
+            return (lambda *a: gemini_transport(*a, api_key=api_key),
+                    lambda *a: gemini_tool_transport(*a, api_key=api_key))
         return gemini_transport, gemini_tool_transport
     if provider == "openai":
-        return openai_transports(base_url, api_key_env or "OPENAI_API_KEY")
+        return openai_transports(base_url, api_key_env or "OPENAI_API_KEY", api_key)
     if provider == "anthropic":
-        return anthropic_transports(base_url, api_key_env or "ANTHROPIC_API_KEY")
+        return anthropic_transports(base_url, api_key_env or "ANTHROPIC_API_KEY", api_key)
     raise ValueError(f"unknown llm provider {provider!r}; use one of {PROVIDERS}")
 
 
@@ -226,6 +238,7 @@ class LLMClient:
         provider: str = "gemini",
         base_url: str | None = None,
         api_key_env: str | None = None,
+        api_key: str | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -238,7 +251,8 @@ class LLMClient:
         self.max_calls = max_calls
         self.max_attempts = max_attempts
         self.base_delay = base_delay
-        default, default_tools = transports_for(provider, base_url, api_key_env)
+        # api_key: hosted demo, a visitor's own key; kept only inside the transports (never in the cache key or log)
+        default, default_tools = transports_for(provider, base_url, api_key_env, api_key=api_key)
         self.provider = provider
         self.base_url = base_url
         self.transport = transport or default

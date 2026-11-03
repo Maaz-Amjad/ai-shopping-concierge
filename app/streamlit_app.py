@@ -1,6 +1,9 @@
 """Shopping Assistant demo (FR-U2): shop in plain words, add your own store, connect a website or an AI assistant.
 
 Everything is done with buttons; no commands. Run: .venv/Scripts/python.exe -m streamlit run app/streamlit_app.py
+
+Hosted demo (Phase 14): CONCIERGE_DEMO=1 shows only the demo catalog, Chat, Shop and How it works. Visitors shop in
+basic mode (no LLM call) or add their own AI key for this browser session; the owner's key is never used.
 """
 
 from __future__ import annotations
@@ -11,9 +14,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import hashlib  # noqa: E402
 import json  # noqa: E402
+import os  # noqa: E402
 import re  # noqa: E402
 import tempfile  # noqa: E402
+from dataclasses import replace  # noqa: E402
 
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
@@ -22,6 +28,7 @@ from app import connection  # noqa: E402
 from app.connection import add_to_claude_desktop, claude_desktop_config_path, claude_desktop_entry  # noqa: E402
 from src import load_config  # noqa: E402
 from src.agent import chat_turn, run_action  # noqa: E402
+from src.llm import LLMClient  # noqa: E402
 from src.pipeline import app_config, get_similar, load_resources, result_to_dict, search_products  # noqa: E402
 from src.store import (FIELDS, OPTIONAL_FIELDS, STORES_DIR, build_store_from_feed, detect_preset, link_template,  # noqa: E402
                        list_stores, read_feed, refresh_store, set_webhook_secret, shopify_feed_url,
@@ -41,8 +48,13 @@ FIELD_QUESTIONS = {"product_id": "Which column is the product's code or ID?", "t
                    "rating_count": "Which column is the number of ratings or reviews (optional)?",
                    "in_stock": "Which column says whether it is in stock (optional)?"}
 NONE = "— not in my file —"
+DEMO_MODE = os.environ.get("CONCIERGE_DEMO", "").strip() == "1"     # hosted demo (Phase 14)
+KEY_PROVIDERS = {"Google Gemini": "gemini", "OpenAI (ChatGPT)": "openai", "Anthropic (Claude)": "anthropic"}
+DEFAULT_MODELS = {"openai": "", "anthropic": "claude-haiku-5-5"}      # gemini: config llm.model
 
 st.set_page_config(page_title="Shopping Assistant", page_icon="🛒", layout="wide")
+if DEMO_MODE:
+    st.set_option("client.showErrorDetails", "type")    # public visitors never see tracebacks (source, paths)
 
 
 # ---------------- helpers ----------------
@@ -56,6 +68,23 @@ def resources(store: str | None):
     """Cached per store and per import (a re-imported store is reloaded)."""
     path = STORES_DIR / store / "catalog.pkl" if store else None
     return load(store, path.stat().st_mtime if path is not None and path.exists() else 0.0)
+
+
+def visitor_resources(res, provider: str, model: str, key: str):
+    """Hosted demo: this session's LLM client. A visitor's own key is used for this browser session only (kept in
+    session state, never saved, logged or shown); without one no LLM call is made (max_calls=0, so the call-cap
+    fallback answers from catalog fields). The owner's .env key is never used. The client is kept for the session
+    (same provider, model and key), so its call cap counts across clicks and the cache is read once."""
+    sig = (provider, model, hashlib.sha256(key.encode()).hexdigest(), id(res))
+    held = st.session_state.get("visitor_client")
+    if held is None or held[0] != sig:
+        llm = res.cfg["llm"]
+        client = LLMClient(model or llm["model"], ROOT / llm["cache_path"], ROOT / llm["call_log_path"],
+                           rpm=llm["rpm"], temperature=llm["temperature"], max_output_tokens=llm["max_output_tokens"],
+                           provider=provider, api_key=key or None,
+                           max_calls=load_config().get("app", {}).get("max_llm_calls") if key else 0)
+        held = st.session_state["visitor_client"] = (sig, client)
+    return replace(res, client=held[1])
 
 
 @st.cache_resource
@@ -128,10 +157,13 @@ if "pending_store" in st.session_state:
 # ---------------- sidebar ----------------
 with st.sidebar:
     st.header("🛒 Shopping Assistant")
-    shops = [DEMO] + list_stores()
-    if st.session_state.get("store_choice") not in shops:
-        st.session_state["store_choice"] = DEMO
-    shop = st.selectbox("Shop", shops, key="store_choice", help="Add your own store in the 'Add your store' tab.")
+    if DEMO_MODE:
+        shop = DEMO                     # hosted demo: the demo catalog only (imported stores stay with their owner)
+    else:
+        shops = [DEMO] + list_stores()
+        if st.session_state.get("store_choice") not in shops:
+            st.session_state["store_choice"] = DEMO
+        shop = st.selectbox("Shop", shops, key="store_choice", help="Add your own store in the 'Add your store' tab.")
     store = None if shop == DEMO else shop
     res = resources(store)
     people = shoppers(store)
@@ -151,8 +183,30 @@ with st.sidebar:
         f_cat = st.selectbox("Category", ["Any"] + res.meta.categories)
         f_brand = st.selectbox("Brand", ["Any"] + res.meta.prompt_brands)
     st.caption(f"{len(res.catalog):,} products · {len(res.meta.categories)} categories")
+    basic = False                       # hosted demo without a visitor key: no LLM call
+    if DEMO_MODE:
+        with st.expander("🔑 Full assistant: use your own AI key"):
+            st.caption("Without a key the assistant runs in basic mode: it finds products by meaning, and limits are "
+                       "set under “Narrow it down”. With your own key it also reads limits from your words, writes a "
+                       "short answer and chats. The key is used only in this browser tab: it is not saved or logged "
+                       "and goes only to the provider you pick. Use a key with a spending limit.")
+            provider = KEY_PROVIDERS[st.selectbox("AI provider", list(KEY_PROVIDERS), key="visitor_provider")]
+            if st.session_state.get("visitor_key_for") != provider:
+                st.session_state["visitor_key"] = ""       # a key typed for one provider is never sent to another
+                st.session_state["visitor_key_for"] = provider
+            model = st.text_input("Model", value=DEFAULT_MODELS.get(provider, res.cfg["llm"]["model"]),
+                                  key=f"visitor_model_{provider}").strip()
+            key = st.text_input("API key", type="password", key="visitor_key").strip()
+            if key and not model:
+                st.warning("Enter a model name for this provider.")
+        basic = not (key and model)
+        st.caption("Basic mode (no AI key)" if basic else "✅ Full assistant on (your key, this tab only)")
+        res = visitor_resources(res, provider, model, "" if basic else key)
 
-chat_tab, shop_tab, add_tab, about_tab = st.tabs(["💬 Chat", "🔎 Shop", "🏪 Add your store", "ℹ️ How it works"])
+tab_names = ["💬 Chat", "🔎 Shop"] + ([] if DEMO_MODE else ["🏪 Add your store"]) + ["ℹ️ How it works"]
+tabs = st.tabs(tab_names)
+chat_tab, shop_tab, about_tab = tabs[0], tabs[1], tabs[-1]
+add_tab = None if DEMO_MODE else tabs[2]
 
 # ---------------- chat ----------------
 with chat_tab:
@@ -168,7 +222,9 @@ with chat_tab:
 
     top_left, top_right = st.columns([5, 1])
     top_left.caption("Chat with the shopping assistant: ask for products, then say things like “cheaper”, "
-                     "“only GE”, “compare 1 and 2”, “save the first one” or “I'll take number 2”.")
+                     "“only GE”, “compare 1 and 2”, “save the first one” or “I'll take number 2”."
+                     + (" Basic mode: each message is a plain search and the Save / Similar / Buy buttons work; add "
+                        "your own AI key on the left for the full chat." if basic else ""))
     if top_right.button("Start over"):
         st.session_state.update(chat_state=None, chat_log=[])
         st.rerun()
@@ -213,7 +269,9 @@ with chat_tab:
 # ---------------- shop ----------------
 with shop_tab:
     st.subheader("What are you looking for?")
-    st.caption("Describe it the way you would to a shop assistant: what it is, what matters to you, your budget.")
+    st.caption("Describe it the way you would to a shop assistant: what it is, what matters to you, your budget."
+               + (" Basic mode: set a budget, category or brand under “Narrow it down” on the left (or add your own "
+                  "AI key there to have them read from your words)." if basic else ""))
     st.write("Try one:")
     cols = st.columns(len(EXAMPLES))
     for col, example in zip(cols, EXAMPLES):
@@ -279,10 +337,53 @@ with shop_tab:
                        f"{t['rank']:.0f} ms · writing the answer {t['generate']:.0f} ms · "
                        f"Personalization: {'off (new visitor)' if flags['cold_start'] else 'on'}")
             notes = [line for line in flags.get("parse_log", []) if line]
+            if basic:
+                notes = [x for x in notes if "call limit" not in x] + ["basic mode (no AI key)"]
             if notes:
                 st.caption("Notes: " + " · ".join(md(x) for x in notes))
             if flags.get("generation_fallback") == "template":
-                st.caption("The written answer failed the fact check twice, so this answer uses catalog facts only.")
+                errors = flags.get("grounding_errors") or []       # empty: no LLM was asked (basic mode, call cap)
+                if any(not e.startswith("LLM error") for e in errors):
+                    st.caption("The written answer failed the fact check twice, so this answer uses catalog facts "
+                               "only.")
+                elif errors:
+                    st.caption("The AI service could not be reached" + (" (check your key)" if DEMO_MODE else "")
+                               + ", so this answer uses catalog facts only.")
+
+# ---------------- how it works ----------------
+with about_tab:
+    st.markdown("""
+**What happens when you search**
+
+1. **Understanding your request** – an AI model reads your words and picks out firm limits such as a budget, a brand or
+   a product type. Everything else ("quiet", "for a small kitchen") is kept as a description.
+2. **Keeping to your limits** – only products that meet every limit are considered. This step is plain, exact code;
+   the AI cannot override it.
+3. **Finding the best matches** – products are compared with your description by meaning, not just by words.
+4. **Putting them in order** – mostly by how well they fit your request; for returning shoppers, a little by what
+   they bought before; and a little by popularity.
+5. **Writing a short answer** – the AI writes a few sentences using only the facts of the products shown. A checker
+   rejects any product, price or brand that isn't really there.
+
+**How well it works**, on 15 test requests that were never used to tune it:
+
+- Every suggested product kept to the stated limits (on the 8 test requests that had limits and matching products;
+  plain search without step 2 kept to them only 43–63 % of the time).
+- Picking out the limits scored 0.94 on a 0–1 accuracy scale (F1).
+
+Across all 25 benchmark requests, all 22 written answers passed the fact check (the other 3 had no matching products
+and got a plain "nothing matches" answer). Full results: `docs/final_report.md`.
+""")
+    if DEMO_MODE:
+        st.markdown("""
+**This online demo** runs in basic mode unless you add your own AI key on the left: steps 1 and 5 then use your key,
+for this browser tab only. Without a key, steps 2 to 4 still run, limits come from “Narrow it down”, and the answer is
+built from catalog facts. Store owners run the full app (their own products, website connection, instant updates) on
+their own computer or server; see the project README.
+""")
+
+if DEMO_MODE:
+    st.stop()                           # hosted demo: the store-owner sections below are not shown
 
 # ---------------- add your store ----------------
 with add_tab:
@@ -468,28 +569,3 @@ with add_tab:
         st.download_button("Download the settings", file_name="shopping-assistant-settings.json",
                             mime="application/json",
                             data=json.dumps(claude_desktop_entry(store), indent=2))
-
-# ---------------- how it works ----------------
-with about_tab:
-    st.markdown("""
-**What happens when you search**
-
-1. **Understanding your request** – an AI model reads your words and picks out firm limits such as a budget, a brand or
-   a product type. Everything else ("quiet", "for a small kitchen") is kept as a description.
-2. **Keeping to your limits** – only products that meet every limit are considered. This step is plain, exact code;
-   the AI cannot override it.
-3. **Finding the best matches** – products are compared with your description by meaning, not just by words.
-4. **Putting them in order** – mostly by how well they fit your request; for returning shoppers, a little by what
-   they bought before; and a little by popularity.
-5. **Writing a short answer** – the AI writes a few sentences using only the facts of the products shown. A checker
-   rejects any product, price or brand that isn't really there.
-
-**How well it works**, on 15 test requests that were never used to tune it:
-
-- Every suggested product kept to the stated limits (on the 8 test requests that had limits and matching products;
-  plain search without step 2 kept to them only 43–63 % of the time).
-- Picking out the limits scored 0.94 on a 0–1 accuracy scale (F1).
-
-Across all 25 benchmark requests, all 22 written answers passed the fact check (the other 3 had no matching products
-and got a plain "nothing matches" answer). Full results: `docs/final_report.md`.
-""")

@@ -11,7 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/app/.cache/huggingface
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# longer timeout and more retries: one stalled download on a slow connection failed a 46-minute build (3 Nov)
+RUN pip install --no-cache-dir --default-timeout=120 --retries 10 -r requirements.txt
 
 # the embedding model is downloaded once at build time, not on every start
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"

@@ -68,7 +68,7 @@ Multi-tenant architecture, Shopify/WooCommerce connectors, real-time event strea
 
 ## 6. Assumptions, Constraints, and Dependencies
 
-- **Time:** 1 to 2 weeks of build time; the proposal must be approved before full implementation.
+- **Time:** 1 to 2 weeks of build time; the proposal must be accepted before full implementation.
 - **Compute:** Google Colab free tier or a local machine; no paid infrastructure.
 - **LLM API:** one provider (OpenAI or Google Gemini) selected before implementation, with a spending cap and awareness of rate limits.
 - **Data:** public dataset with a license that permits academic use. Price coverage must be profiled before committing to a dataset.
@@ -223,7 +223,7 @@ Priority uses MoSCoW: **M** Must, **S** Should, **C** Could.
 
 | Day | Milestone |
 | --- | --- |
-| 1 | Approval confirmed, dataset chosen and profiled, LLM provider fixed |
+| 1 | Proposal accepted, dataset chosen and profiled, LLM provider fixed |
 | 2 to 3 | Canonical schema, cleaning, EDA, embeddings, index, baselines |
 | 4 | Query parser, category mapping, filtering, filter-aware retrieval |
 | 5 | Benchmark queries, gold constraints, evaluation harness |
@@ -234,9 +234,9 @@ Priority uses MoSCoW: **M** Must, **S** Should, **C** Could.
 | 10 | README, report, slides, demo video, optional Streamlit |
 
 
-## 14. Addendum: approved scope changes (27–30 October 2026)
+## 14. Addendum: scope changes decided during the build (27 October – 3 November 2026)
 
-The sections above are the requirements as approved before the build. The changes below were decided
+The sections above are the requirements as set before the build. The changes below were decided
 during the build, after the core evaluation (sections 7.7 and 10) was complete; none of them changes the reported
 benchmark, which keeps the evaluated configuration. Results are in the [final report](final_report.md), sections 11–12.
 
@@ -259,6 +259,7 @@ benchmark, which keeps the evaluated configuration. Results are in the [final re
 | NFR-1 | Show products before the written answer (streaming endpoints) | Done; answer latency unchanged |
 | NFR-5 | API hardening: rate limits, optional API keys, request log without query text or IP, HMAC webhooks, replay and ordering guard, privacy-limited events | Done |
 | NFR-9 | Container image for deployment | Dockerfile written; not yet built on the development machine |
+| FR-U6 | Public hosted demo (Streamlit Community Cloud): demo catalog only, store-owner sections hidden, basic mode with no LLM call, full assistant with the visitor's own key kept only in their session | Done; processed catalog and embeddings committed |
 
 Out of scope remains: multi-tenant accounts, autonomous purchasing, production-scale infrastructure, LLM fine-tuning
 and computer vision. Accounts, per-store keys entered in the app, an owner dashboard and a new web front end are
