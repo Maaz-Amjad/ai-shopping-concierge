@@ -232,7 +232,7 @@ by (model, prompt version, schema, settings, prompt). All reported tables are re
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
 `04_evaluation` (which run with an LLM call budget of zero); the section 12 results by `python -m src.evaluate
 rating|adaptive|hybrid|rerank --split dev|test` (add `--completed` for section 12.9) and the chat evaluation by
-`python -m src.agent --limit 0`. 322 unit and integration tests run offline with a fake client.
+`python -m src.agent --limit 0`. 323 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 

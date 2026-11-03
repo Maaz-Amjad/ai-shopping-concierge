@@ -62,15 +62,17 @@ if DEMO_MODE:
 
 # ---------------- helpers ----------------
 @st.cache_resource(show_spinner="Getting the store ready (first time takes a minute)…", max_entries=4)
-def load(store: str | None, version: float):
-    cfg = load_config()
+def load(store: str | None, version: float, settings: str):
+    cfg = json.loads(settings)
     return load_resources(app_config(cfg), max_calls=cfg.get("app", {}).get("max_llm_calls"), store=store)
 
 
 def resources(store: str | None):
-    """Cached per store and per import (a re-imported store is reloaded)."""
+    """Cached per store, per import (a re-imported store is reloaded) and per config: a changed config.yaml (a new
+    deploy) reloads, instead of serving the catalog cached with the old settings."""
     path = STORES_DIR / store / "catalog.pkl" if store else None
-    return load(store, path.stat().st_mtime if path is not None and path.exists() else 0.0)
+    settings = json.dumps(load_config(), sort_keys=True, default=str)
+    return load(store, path.stat().st_mtime if path is not None and path.exists() else 0.0, settings)
 
 
 def visitor_resources(res, provider: str, model: str, key: str):
