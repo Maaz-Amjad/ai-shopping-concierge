@@ -157,7 +157,8 @@ if "pending_store" in st.session_state:
 
 # ---------------- sidebar ----------------
 with st.sidebar:
-    st.header("🛒 Shopping Assistant")
+    st.header("⚙️ Settings")
+    st.markdown("**🛍️ Shop and shopper**")
     if DEMO_MODE:
         shop = DEMO                     # hosted demo: the demo catalog only (imported stores stay with their owner)
     else:
@@ -178,14 +179,24 @@ with st.sidebar:
         st.caption("Recently bought:\n" + "\n".join(f"- {md(t)}" for t in row["recent"]))
     elif store:
         st.caption("Your store has no purchase history here yet, so everyone shops as a new visitor.")
+    st.divider()
+    st.markdown("**🎯 Results**")
     n = st.slider("How many suggestions?", 3, 10, 5)
-    with st.expander("Narrow it down (optional)"):
-        f_max = st.number_input("Highest price ($, 0 = no limit)", min_value=0.0, value=0.0, step=5.0)
-        f_cat = st.selectbox("Category", ["Any"] + res.meta.categories)
-        f_brand = st.selectbox("Brand", ["Any"] + res.meta.prompt_brands)
-    st.caption(f"{len(res.catalog):,} products · {len(res.meta.categories)} categories")
+    active = any(st.session_state.get(k) not in (None, 0.0, "Any") for k in ("f_max", "f_cat", "f_brand"))
+    with st.expander("Narrow it down (optional)", expanded=active):
+        f_max = st.number_input("Highest price ($, 0 = no limit)", min_value=0.0, value=0.0, step=5.0, key="f_max")
+        f_cat = st.selectbox("Category", ["Any"] + res.meta.categories, key="f_cat")
+        f_brand = st.selectbox("Brand", ["Any"] + res.meta.prompt_brands, key="f_brand")
+    limits_set = [x for x in (f"under ${f_max:g}" if f_max else None, None if f_cat == "Any" else f_cat,
+                              None if f_brand == "Any" else f_brand) if x]
+    if limits_set:                                      # the limits in force, with one click to clear them
+        st.caption("Limits: " + " · ".join(chip(x) for x in limits_set))
+        st.button("Clear limits", key="clear_limits", on_click=lambda: st.session_state.update(
+            f_max=0.0, f_cat="Any", f_brand="Any"))
     basic = False                       # hosted demo without a visitor key: no LLM call
     if DEMO_MODE:
+        st.divider()
+        st.markdown("**🤖 AI assistant**")
         with st.expander("🔑 Full assistant: use your own AI key"):
             st.caption("Without a key the assistant runs in basic mode: it finds products by meaning, and limits are "
                        "set under “Narrow it down”. With your own key it also reads limits from your words, writes a "
@@ -203,6 +214,8 @@ with st.sidebar:
         basic = not (key and model)
         st.caption("Basic mode (no AI key)" if basic else "✅ Full assistant on (your key, this tab only)")
         res = visitor_resources(res, provider, model, "" if basic else key)
+    st.divider()
+    st.caption(f"📦 {len(res.catalog):,} products · {len(res.meta.categories)} categories")
 
 st.title("🛒 AI Shopping Concierge")
 st.caption(f"Describe what you need in your own words: the assistant keeps to your budget, brand and category, "
@@ -247,11 +260,12 @@ with chat_tab:
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([6, 1, 1, 1])
                     c1.markdown(f"**{p['number']}. {md(p['title'])}**  \n"
-                                + " · ".join(md(x) for x in [p.get("brand"), money(p.get("price")), stars(p),
-                                                             "**Out of stock**" if p.get("in_stock") is False else None]
+                                + " · ".join(x for x in [f"**{md(money(p.get('price')))}**", md(p.get("brand")),
+                                                         md(stars(p)) if stars(p) else None,
+                                                         "**Out of stock**" if p.get("in_stock") is False else None]
                                              if x))
                     if p.get("reason"):
-                        c1.caption(md(p["reason"]))
+                        c1.caption(f"💡 {md(p['reason'])}")
                     last = i == len(st.session_state["chat_log"]) - 1          # buttons act on the latest list
                     for col, label, name in ((c2, "Save", "save"), (c3, "Similar", "similar"), (c4, "Buy", "buy")):
                         args = {"product_id": p["product_id"]}                  # this card's product
@@ -335,11 +349,14 @@ with shop_tab:
                 with st.container(border=True):
                     left, right = st.columns([5, 2])
                     left.markdown(f"**{p['rank']}. {md(p['title'])}**")
-                    left.caption(" · ".join(md(x) for x in [p["brand"], p["category"], money(p["price"]), stars(p)]
-                                            if x))
+                    left.caption(" · ".join(md(x) for x in [p["brand"], p["category"]] if x))
                     if p.get("reason"):
-                        left.markdown(md(p["reason"]))
-                    right.metric("Match", f"{round(100 * p['final'])}%")
+                        left.markdown(f"💡 **Why it fits:** {md(p['reason'])}")
+                    right.markdown(f"### {md(money(p['price']))}")              # price first, then rating
+                    if stars(p):
+                        right.markdown(md(stars(p)))
+                    match = min(max(p["final"], 0.0), 1.0)
+                    right.progress(match, text=f"Match {round(100 * p['final'])}%")
                     with right.popover("Why this order?"):
                         st.write("Fits your request")
                         st.progress(min(max(p["s_sem"], 0.0), 1.0))
@@ -350,10 +367,10 @@ with shop_tab:
                         if p.get("avg_rating") is not None:
                             st.write("Well rated by buyers")
                             st.progress(min(max(p.get("s_rat") or 0.0, 0.0), 1.0))
-                    with left.expander("Similar products"):
-                        for _, s in get_similar(p["product_id"], res, 3).iterrows():
-                            st.markdown(f"- {md(str(s['title'])[:90])} — "
-                                        f"{money(None if pd.isna(s['price']) else s['price'])}")
+                    similar = [f"{md(str(s['title'])[:45])}… {md(money(None if pd.isna(s['price']) else s['price']))}"
+                               for _, s in get_similar(p["product_id"], res, 3).iterrows()]
+                    if similar:                                  # compact: one line instead of a list
+                        left.caption("🔁 Similar: " + " · ".join(similar))
         with st.expander("Details for the curious"):
             t = result["timings_ms"]
             st.caption(f"Understanding {t['parse']:.0f} ms · searching {t['retrieve']:.0f} ms · ranking "

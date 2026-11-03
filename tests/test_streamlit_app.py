@@ -313,3 +313,13 @@ def test_a_recent_search_can_be_removed_with_its_cross(tmp_path, monkeypatch):
     assert not at.exception
     assert labels() == ["range hood"]
     assert at.text_input(key="query").value == "range hood" and cards_shown(at)   # no new search, results kept
+
+
+def test_active_limits_are_shown_and_can_be_cleared(tmp_path, monkeypatch):
+    at = shop_app(tmp_path, monkeypatch, [])
+    assert "clear_limits" not in [b.key for b in at.button]                         # nothing set: no limits row
+    at.sidebar.number_input(key="f_max").set_value(110.0).run()
+    assert any("`under $110`" in c.value for c in at.sidebar.caption)
+    at.button(key="clear_limits").click().run()
+    assert not at.exception
+    assert at.sidebar.number_input(key="f_max").value == 0.0 and "clear_limits" not in [b.key for b in at.button]
