@@ -344,3 +344,14 @@ def test_first_visit_guidance_and_chat_example_buttons(tmp_path, monkeypatch):
     assert at.session_state["chat_log"][0] == {"role": "user", "text": "a quiet ice maker for my kitchen"}
     assert any(m.value.startswith("**1. ice maker a**") for m in at.markdown)
     assert "chat-example-0" not in [b.key for b in at.button]                       # examples only on a new chat
+
+
+def test_clear_button_empties_the_request_box_and_results(tmp_path, monkeypatch):
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    at = shop_app(tmp_path, monkeypatch, [parsed, gen(["A", "B"])])
+    at.text_input(key="query").set_value("ice maker").run()
+    assert cards_shown(at)
+    at.button(key="clear_query").click().run()
+    assert not at.exception
+    assert at.text_input(key="query").value == "" and not cards_shown(at) and not at.warning
+    assert [b.label for b in at.button if b.key and b.key.startswith("recent-")] == ["ice maker"]   # history kept
