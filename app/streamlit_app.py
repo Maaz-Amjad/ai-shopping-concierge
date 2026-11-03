@@ -53,7 +53,7 @@ MAX_RECENT = 5                                                      # recent sea
 KEY_PROVIDERS = {"Google Gemini": "gemini", "OpenAI (ChatGPT)": "openai", "Anthropic (Claude)": "anthropic"}
 DEFAULT_MODELS = {"openai": "", "anthropic": "claude-haiku-5-5"}      # gemini: config llm.model
 
-st.set_page_config(page_title="Shopping Assistant", page_icon="🛒", layout="wide")
+st.set_page_config(page_title="AI Shopping Concierge", page_icon="🛒", layout="wide")
 if DEMO_MODE:
     st.set_option("client.showErrorDetails", "type")    # public visitors never see tracebacks (source, paths)
 
@@ -203,6 +203,10 @@ with st.sidebar:
         basic = not (key and model)
         st.caption("Basic mode (no AI key)" if basic else "✅ Full assistant on (your key, this tab only)")
         res = visitor_resources(res, provider, model, "" if basic else key)
+
+st.title("🛒 AI Shopping Concierge")
+st.caption(f"Describe what you need in your own words: the assistant keeps to your budget, brand and category, "
+           f"and explains its picks using only real product facts. {len(res.catalog):,} products in “{md(shop)}”.")
 
 tab_names = ["💬 Chat", "🔎 Shop"] + ([] if DEMO_MODE else ["🏪 Add your store"]) + ["ℹ️ How it works"]
 tabs = st.tabs(tab_names)
