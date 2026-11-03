@@ -302,12 +302,16 @@ with shop_tab:
             recent = [q for q in st.session_state.get("recent", []) if q != query.strip()]
             st.session_state["recent"] = [query.strip()] + recent[:MAX_RECENT - 1]   # this browser session only
 
-    if st.session_state.get("recent"):                  # the session's searches, newest first; a click searches again
-        cols = st.columns([1] + [3] * MAX_RECENT)
+    if st.session_state.get("recent"):                  # the session's searches, newest first; a click searches again,
+        cols = st.columns([1] + [3, 0.6] * MAX_RECENT, vertical_alignment="center")   # its ✕ removes it
         cols[0].caption("Recent:")
-        for i, (col, text) in enumerate(zip(cols[1:], st.session_state["recent"])):
-            col.button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
-                       use_container_width=True, on_click=lambda t=text: st.session_state.update(query=t))
+        for i, text in enumerate(st.session_state["recent"]):
+            cols[1 + 2 * i].button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
+                                   use_container_width=True,
+                                   on_click=lambda t=text: st.session_state.update(query=t))
+            cols[2 + 2 * i].button("✕", key=f"forget-{i}", help="Remove from recent searches",
+                                   on_click=lambda t=text: st.session_state.update(
+                                       recent=[q for q in st.session_state["recent"] if q != t]))
 
     result = st.session_state.get("result")
     if result:
