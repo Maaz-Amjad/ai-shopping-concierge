@@ -21,7 +21,7 @@ explained only with facts from the catalog.*
 *atomcamp AI Bootcamp final project (NLP/LLM track) by Maaz Amjad, 2026*
 
 [Why](#-why-this-exists) · [Phases](#-project-phases) · [Docs](#-documentation--notebooks) · [Structure](#-project-structure) · [Architecture](#-architecture) ·
-[Results](#-results) · [Live demo](#-live-demo) · [Deployment](#-deployment) · [Store integration](#-store-integration) · [Security](#-error-handling--security)
+[Results](#-results) · [Live demo](#-live-demo) · [Run it](#-run-it-yourself) · [Deployment](#-deployment) · [Store integration](#-store-integration) · [Security](#-error-handling--security)
 
 </div>
 
@@ -275,6 +275,30 @@ shown, and no owner key is stored on the host. The store-owner tools are not par
 understood requests of visitors who use a key until the app restarts; a wrong or expired key falls back to basic
 answers; memory is tight for the model and catalog on the free tier. When even the best product is a weak match, the
 app says the store may not carry the request.
+
+---
+
+## 🛠 Run It Yourself
+
+The processed catalog and embeddings are included, so no data download is needed. Python 3.12 with
+[uv](https://docs.astral.sh/uv/) (or `python -m venv`):
+
+```bash
+git clone https://github.com/Maaz-Amjad/ai-shopping-concierge && cd ai-shopping-concierge
+uv venv --python 3.12 .venv
+uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Linux/macOS: .venv/bin/python
+.venv/Scripts/python.exe -m pytest -q                                  # 328 passed, no API calls
+.venv/Scripts/python.exe -m streamlit run app/streamlit_app.py         # the app
+.venv/Scripts/python.exe -m uvicorn app.api:app --port 8000            # API, widget and demo store page
+```
+
+- **LLM key (optional):** copy `.env.example` to `.env` and add `GEMINI_API_KEY`; without a key, search still works
+  and answers come from catalog facts. OpenAI-compatible and Claude keys work too (`llm.provider` in `config.yaml`).
+- **Reproduce the results:** every reported table regenerates from cached outputs without API calls, for example
+  `.venv/Scripts/python.exe -m src.evaluate report --split test`; each notebook runs headless with
+  `.venv/Scripts/python.exe -m jupyter nbconvert --to notebook --execute --inplace notebooks/<name>.ipynb`.
+- **Rebuild the catalog from raw data:** download the Amazon Reviews 2023 Appliances files into `data/raw/`, then run
+  `python -m src.data` and `python -m src.embed` (about 27 minutes on CPU).
 
 ---
 
