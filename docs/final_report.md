@@ -2,7 +2,7 @@
 
 Maaz Amjad | Atomcamp AI Bootcamp Final Project (NLP/LLM track) | October 2026
 
-> **Status (30 Oct, final; deployment added 3 Nov):** every number comes from `eval/results/` (API call counts from
+> **Status (deployed):** every number comes from `eval/results/` (API call counts from
 > the call log). Every product in every reported top 10 has a relevance label: sections 6–7 use the main labels (23 %
 > human-checked); the production extensions in section 12 add 33 LLM-only labels in a separate file (section 12.9).
 > The app now runs as a [public demo](https://ai-shopping-concierge.streamlit.app/) and the API as a container image
