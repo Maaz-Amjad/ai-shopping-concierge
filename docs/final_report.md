@@ -199,8 +199,8 @@ satisfy the parsed limits" besides missing prices; see section 9) and checked by
   numbers reflect that endpoint.
 - **Production extensions.** Their test results rest on the same 15 queries, and the 33 extra labels of section 12.9
   are LLM-only. The API keeps rate limits, duplicate-delivery memory and the store lock per process, and stores are
-  files on one disk, so running several server copies needs a shared store (Redis, a database). The Dockerfile was
-  written but not built on the development machine. WooCommerce delete webhooks carry no time, so a late delete can
+  files on one disk, so running several server copies needs a shared store (Redis, a database). The container image was
+  built and checked locally (3 Nov) but has not run on a server yet. WooCommerce delete webhooks carry no time, so a late delete can
   remove a restored product until the next refresh. Everything runs on CPU, which rules out the cross-encoder.
 - **Security review (30 Oct).** A full-project review found no exposed secrets and no injection, XSS or path
   traversal, and two denial-of-service problems that were fixed: unbounded queries (now 500 characters; bodies 256 KB)
@@ -378,8 +378,8 @@ supports it. Reproduce with `python -m src.evaluate adaptive --split dev|test`.
 
 The API gained what a public deployment needs, without changing any result: a per-client rate limit (30 requests a
 minute for the LLM endpoints, 120 for the rest; 429 with Retry-After), optional per-store API keys, a request log with
-no query text or IP address (NFR-5), and a Dockerfile (written, not built here: Docker is not installed on the
-development machine). Stores can now push changes: Shopify and WooCommerce product webhooks are checked with the
+no query text or IP address (NFR-5), and a Dockerfile (built and checked on 3 Nov, published on Docker Hub as
+`maazamjad110/ai-shopping-concierge`). Stores can now push changes: Shopify and WooCommerce product webhooks are checked with the
 platform's HMAC-SHA256 signature, repeated deliveries are ignored, and each change updates or removes just that product,
 re-embedding only it. Checked live against the running server on a copy of the 300-product store: a signed update was
 applied in under a second (price and "out of stock" stored), its repeat was ignored, a forged signature was refused
