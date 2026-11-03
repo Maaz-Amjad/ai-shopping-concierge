@@ -11,7 +11,7 @@
 [![Embeddings](https://img.shields.io/badge/Embeddings-BGE--small-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/BAAI/bge-small-en-v1.5)
 [![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](#-store-integration)
 [![Docker](https://img.shields.io/badge/Docker-ai--shopping--concierge-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/maazamjad110/ai-shopping-concierge)
-[![Tests](https://img.shields.io/badge/tests-323%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
+[![Tests](https://img.shields.io/badge/tests-328%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
 
 *Ask for "a quiet countertop ice maker under $150" and get products that really are under $150, ranked for you,
 explained only with facts from the catalog.*
@@ -271,6 +271,11 @@ app, showing the Appliances catalog with the **Chat**, **Shop** and **How it wor
 A visitor's key (Gemini, OpenAI or Claude) stays in their browser session only: it is never saved, logged, cached or
 shown, and no owner key is stored on the host. The store-owner tools are not part of the hosted demo.
 
+**Limits of the free host:** all visitors share the per-model rate limit; the host's LLM response cache holds the
+understood requests of visitors who use a key until the app restarts; a wrong or expired key falls back to basic
+answers; memory is tight for the model and catalog on the free tier. When even the best product is a weak match, the
+app says the store may not carry the request.
+
 ---
 
 ## ☁️ Deployment
@@ -369,7 +374,7 @@ serves interactive documentation at `/docs`.
 
 ## 🧪 Testing
 
-323 automated tests cover data, retrieval, filters, parsing, ranking, grounded answers, evaluation metrics, the LLM
+328 automated tests cover data, retrieval, filters, parsing, ranking, grounded answers, evaluation metrics, the LLM
 client and providers, the chat agent, stores and webhooks, the API, the MCP server and the app. Every test uses a fake
 LLM on a toy catalog, so no test calls a real API. All reported results regenerate from cached outputs without new
 LLM calls.
@@ -388,7 +393,7 @@ LLM calls.
 | Store links | server-side request forgery | addresses must resolve to public hosts, checked on every redirect; download cap |
 | Webhooks | forged, replayed, out of order | HMAC check, duplicates ignored, older updates skipped, deletions remembered |
 | Data | concurrent writers, crashes | lock file per store, atomic file swaps with rollback |
-| Privacy | shopper data | no query text or IP in logs or events; random browser id renewed every 30 days; events kept one year |
+| Privacy | shopper data | no query text or IP in logs or events; random browser id renewed every 30 days; events kept one year; the LLM response cache holds understood requests (needed for reproducibility) |
 | Hosted demo | visitors' keys | kept in the browser session only; never saved, logged, cached or shown |
 | Untrusted text | product descriptions, chat state | treated as data in prompts; widget renders text only |
 

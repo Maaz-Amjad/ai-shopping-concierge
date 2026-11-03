@@ -232,7 +232,7 @@ by (model, prompt version, schema, settings, prompt). All reported tables are re
 `python -m src.evaluate report --split test`, `python -m src.personalize` and the notebooks `03_pipeline` and
 `04_evaluation` (which run with an LLM call budget of zero); the section 12 results by `python -m src.evaluate
 rating|adaptive|hybrid|rerank --split dev|test` (add `--completed` for section 12.9) and the chat evaluation by
-`python -m src.agent --limit 0`. 323 unit and integration tests run offline with a fake client.
+`python -m src.agent --limit 0`. 328 unit and integration tests run offline with a fake client.
 
 ## 11. Prototype and integrations
 
@@ -297,8 +297,9 @@ answering searches, falling back to catalog-only answers without a key.
 **Requests the catalog does not carry.** Retrieval always returns the nearest products, so "potato peeler" used to
 get a potato cooker and dishwasher baskets presented as matches (the benchmark's no-result queries only test limits
 that exclude everything). The app now flags a *weak match* when even the best shown product's cosine is below
-`app.weak_match_below` = 0.70, chosen on the 10 dev queries (the largest 0.05 step that flags none of them; their best
-matches are 0.735 to 0.866), and says the store may not carry the request while still showing the closest products.
+`app.weak_match_below` = 0.70, chosen on the 10 dev queries (the largest 0.05 step that flags none of them; scored as
+the app shows them, their best shown products are 0.725 to 0.859 without a key and 0.752 to 0.846 with the LLM
+parse, so the margin is small), and says the store may not carry the request while still showing the closest products.
 On the real catalog it flags clearly unrelated requests (potato peeler 0.66, running shoes 0.54) but not near-misses
 that resemble appliances (toaster for sandwich 0.77), so it is a partial answer to FR-G5; an LLM relevance check in
 full mode would cover more. Rankings, answers and every reported number are unchanged.

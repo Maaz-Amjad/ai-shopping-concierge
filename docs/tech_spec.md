@@ -486,4 +486,4 @@ log, files or page; switching provider clears it) and the owner's environment ke
 `interactions.pkl`, `artifacts/embeddings.npy` and `product_ids.npy` so the host can load the catalog. Every result
 carries `best_similarity` (raw cosine of the best shown product) and `weak_match` (below `app.weak_match_below`,
 0.70, chosen on dev); the app then says the store may not carry the request. A flag only: rankings and answers are
-unchanged, and the benchmark configuration has no cut-off.
+unchanged. Benchmark runs read the same config and so compute the flag too, but no reported table stores it.

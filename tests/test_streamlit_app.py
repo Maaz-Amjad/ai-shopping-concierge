@@ -435,7 +435,7 @@ def test_recent_search_labels_show_the_text_as_typed(tmp_path, monkeypatch):
     at = shop_app(tmp_path, monkeypatch, [parsed, gen(["A"])])
     at.text_input(key="query").set_value("filter between $20 and $40").run()
     label = at.button(key="recent-0").label
-    assert "\$20" in label and "\$40" in label                  # escaped, so shown literally
+    assert r"\$20" in label and r"\$40" in label                # escaped, so shown literally
 
 
 def test_a_category_not_in_the_new_shop_is_reset_and_not_shown_as_active(tmp_path, monkeypatch):

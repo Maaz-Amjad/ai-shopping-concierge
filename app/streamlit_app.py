@@ -67,11 +67,22 @@ def load(store: str | None, version: float, settings: str):
     return load_resources(app_config(cfg), max_calls=cfg.get("app", {}).get("max_llm_calls"), store=store)
 
 
+@st.cache_resource
+def loaded_settings() -> dict:
+    """The config the cached catalogs were loaded with (shared by all sessions of this process)."""
+    return {"settings": None}
+
+
 def resources(store: str | None):
     """Cached per store, per import (a re-imported store is reloaded) and per config: a changed config.yaml (a new
-    deploy) reloads, instead of serving the catalog cached with the old settings."""
+    deploy) reloads, instead of serving the catalog cached with the old settings, and drops the copies loaded with the
+    old config (each holds a model, catalog and embeddings)."""
     path = STORES_DIR / store / "catalog.pkl" if store else None
     settings = json.dumps(load_config(), sort_keys=True, default=str)
+    held = loaded_settings()
+    if held["settings"] != settings:
+        load.clear()
+        held["settings"] = settings
     return load(store, path.stat().st_mtime if path is not None and path.exists() else 0.0, settings)
 
 
@@ -80,7 +91,8 @@ def visitor_resources(res, provider: str, model: str, key: str):
     session state, never saved, logged or shown); without one no LLM call is made (max_calls=0, so the call-cap
     fallback answers from catalog fields). The owner's .env key is never used. The client is kept for the session
     (same provider, model and key), so its call cap counts across clicks and the cache is read once."""
-    sig = (provider, model, hashlib.sha256(key.encode()).hexdigest(), id(res))
+    sig = (provider, model, hashlib.sha256(key.encode()).hexdigest(), id(res),
+           json.dumps(res.cfg.get("llm"), sort_keys=True, default=str))    # a reloaded catalog may reuse the id
     held = st.session_state.get("visitor_client")
     if held is None or held[0] != sig:
         llm = res.cfg["llm"]
@@ -127,6 +139,12 @@ def shoppers(store: str | None) -> pd.DataFrame:
 def chip(text: str) -> str:
     """Inline code chip; text inside backticks is shown literally, so only a backtick could break out."""
     return "`" + str(text).replace("`", "'") + "`"
+
+
+def short(text, limit: int) -> str:
+    """Text cut to `limit` characters, with an ellipsis only when something was cut."""
+    text = str(text)
+    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 def money(value) -> str:
@@ -186,6 +204,9 @@ with st.sidebar:
     st.divider()
     st.markdown("**🎯 Results**")
     n = st.slider("How many suggestions?", 3, 10, 5)
+    for k, options in (("f_cat", res.meta.categories), ("f_brand", res.meta.prompt_brands)):
+        if st.session_state.get(k, "Any") not in ["Any"] + list(options):
+            st.session_state[k] = "Any"                  # a limit this shop does not have (e.g. after switching)
     active = any(st.session_state.get(k) not in (None, 0.0, "Any") for k in ("f_max", "f_cat", "f_brand"))
     with st.expander("Narrow it down (optional)", expanded=active):
         f_max = st.number_input("Highest price ($, 0 = no limit)", min_value=0.0, value=0.0, step=5.0, key="f_max")
@@ -291,7 +312,8 @@ with chat_tab:
             for j, pid in enumerate(shortlist, start=1):
                 row = res.catalog[res.catalog["product_id"] == pid].iloc[0]
                 st.markdown(f"{j}. {md(str(row['title'])[:90])} — {money(None if pd.isna(row['price']) else row['price'])}")
-    message = st.chat_input("Message the shopping assistant") or st.session_state.pop("chat_pending", None)
+    pending = st.session_state.pop("chat_pending", None)          # an example button, used once
+    message = st.chat_input("Message the shopping assistant") or pending
     if message:
         st.session_state["chat_log"].append({"role": "user", "text": message})
         with st.spinner("Thinking…"):
@@ -343,7 +365,7 @@ with shop_tab:
                       help="Remove the newest search from this list (click again for the next)",  # removes one
                       on_click=lambda: st.session_state.update(recent=st.session_state["recent"][1:]))
             for i, text in enumerate(st.session_state["recent"]):
-                st.button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
+                st.button(md(text if len(text) <= 40 else text[:39] + "…"), key=f"recent-{i}", help=md(text),
                           width="content", on_click=lambda t=text: st.session_state.update(query=t))
 
     result = st.session_state.get("result")
@@ -399,7 +421,7 @@ with shop_tab:
                         if p.get("avg_rating") is not None:
                             st.write("Well rated by buyers")
                             st.progress(min(max(p.get("s_rat") or 0.0, 0.0), 1.0))
-                    similar = [f"{md(str(s['title'])[:45])}… {md(money(None if pd.isna(s['price']) else s['price']))}"
+                    similar = [f"{md(short(s['title'], 45))} {md(money(None if pd.isna(s['price']) else s['price']))}"
                                for _, s in get_similar(p["product_id"], res, 3).iterrows()]
                     if similar:                                  # compact: one line instead of a list
                         left.caption("🔁 Similar: " + " · ".join(similar))

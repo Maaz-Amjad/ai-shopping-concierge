@@ -26,8 +26,9 @@ eval: {k: [5, 10], pool_depth: 10, bootstrap_resamples: 1000}
 app:
   max_llm_calls: 300                  # per server process (Flash-Lite free tier: 500 RPD); then template answers
   # Phase 14: say the store may not carry the request when the best shown product's cosine is below this.
-  # Chosen on the 10 dev queries: the largest 0.05 step that flags none of them (lowest dev best 0.735);
-  # flags clearly unrelated requests (potato peeler 0.66, running shoes 0.62) but not near-misses (toaster 0.77).
+  # Chosen on the 10 dev queries, scored as the app shows them: the largest 0.05 step that flags none (lowest dev
+  # best 0.725 without a key, 0.752 with the LLM parse); flags clearly unrelated requests (potato peeler 0.66,
+  # running shoes 0.54) but not near-misses (toaster 0.77).
   weak_match_below: 0.70
   allowed_origins: ["http://localhost:8000", "http://127.0.0.1:8000"]   # add each store's domain for the widget
   # Phase 13.4: requests per minute per client (llm = /search and /chat); API key per store (X-API-Key header,
