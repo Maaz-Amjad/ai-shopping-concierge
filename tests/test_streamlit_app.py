@@ -246,3 +246,42 @@ def test_demo_basic_mode_applies_the_narrow_it_down_limits_without_llm(tmp_path,
     cards = [m.value for m in at.markdown if m.value.startswith("**")]
     assert not at.exception and calls == []
     assert any("ice maker a" in c for c in cards) and not any("ice maker b" in c for c in cards)   # B costs $120
+
+
+# ---- Shop tab UX (3 Nov) --------------------------------------------------------------------------------------
+
+def shop_app(tmp_path, monkeypatch, responses):
+    from src import data, pipeline, store
+
+    res = resources(tmp_path, responses)
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    return AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+
+
+def cards_shown(at) -> list[str]:
+    return [m.value for m in at.markdown if m.value.startswith("**1.") or m.value.startswith("**2.")]
+
+
+def test_clicking_a_try_one_example_searches_right_away(tmp_path, monkeypatch):
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    at = shop_app(tmp_path, monkeypatch, [parsed, gen(["A", "B"])])
+    next(b for b in at.button if b.label.startswith("quiet portable countertop")).click().run()
+    assert not at.exception
+    assert at.text_input(key="query").value.startswith("quiet portable countertop")
+    assert cards_shown(at)                                   # results without pressing Search
+
+
+def test_clearing_the_request_clears_the_results(tmp_path, monkeypatch):
+    parsed = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
+    at = shop_app(tmp_path, monkeypatch, [parsed, gen(["A", "B"])])
+    at.text_input(key="query").set_value("ice maker").run()
+    assert cards_shown(at)
+    at.text_input(key="query").set_value("").run()
+    assert not at.exception
+    assert not cards_shown(at) and not at.info                # old results and answer are gone
+    assert not at.warning                                     # clearing is not an error
