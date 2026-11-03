@@ -3,3 +3,6 @@ address = "localhost"   # not reachable from other machines
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+primaryColor = "#4F46E5"        # indigo accent for buttons, sliders and links; light and dark mode both kept

@@ -11,7 +11,7 @@
 [![Embeddings](https://img.shields.io/badge/Embeddings-BGE--small-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/BAAI/bge-small-en-v1.5)
 [![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](#-store-integration)
 [![Docker](https://img.shields.io/badge/Docker-ai--shopping--concierge-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/maazamjad110/ai-shopping-concierge)
-[![Tests](https://img.shields.io/badge/tests-315%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
+[![Tests](https://img.shields.io/badge/tests-318%20passing-2EA44F?logo=pytest&logoColor=white)](#-testing)
 
 *Ask for "a quiet countertop ice maker under $150" and get products that really are under $150, ranked for you,
 explained only with facts from the catalog.*
@@ -369,7 +369,7 @@ serves interactive documentation at `/docs`.
 
 ## 🧪 Testing
 
-315 automated tests cover data, retrieval, filters, parsing, ranking, grounded answers, evaluation metrics, the LLM
+318 automated tests cover data, retrieval, filters, parsing, ranking, grounded answers, evaluation metrics, the LLM
 client and providers, the chat agent, stores and webhooks, the API, the MCP server and the app. Every test uses a fake
 LLM on a toy catalog, so no test calls a real API. All reported results regenerate from cached outputs without new
 LLM calls.

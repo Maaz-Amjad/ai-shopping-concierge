@@ -296,11 +296,11 @@ with chat_tab:
 
 # ---------------- shop ----------------
 with shop_tab:
-    st.subheader("What are you looking for?")
+    st.subheader("🔎 What are you looking for?")
     st.caption("Describe it the way you would to a shop assistant: what it is, what matters to you, your budget."
                + (" Basic mode: set a budget, category or brand under “Narrow it down” on the left (or add your own "
                   "AI key there to have them read from your words)." if basic else ""))
-    st.write("Try one:")
+    st.caption("✨ Try one:")
     cols = st.columns(len(EXAMPLES))
     for col, example in zip(cols, EXAMPLES):                # a callback runs before the page is redrawn, so the
         col.button(example, use_container_width=True,       # request box shows the example and it is searched
