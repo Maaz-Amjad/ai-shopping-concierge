@@ -334,8 +334,9 @@ with shop_tab:
             st.session_state["recent"] = [query.strip()] + recent[:MAX_RECENT - 1]   # this browser session only
 
     if st.session_state.get("recent"):                  # the session's searches, newest first; a click searches again
-        with st.container(horizontal=True, vertical_alignment="center", gap="small", wrap=True):
-            st.caption("Recent:")
+        with st.container(horizontal=True, horizontal_alignment="left", vertical_alignment="center", gap="small",
+                          wrap=True):
+            st.caption("Recent:", width="content")          # a full-width label pushed the buttons to the right
             st.button("", key="forget_recent", icon=":material/close:", width="content",   # one ✕: each click
                       help="Remove the newest search from this list (click again for the next)",  # removes one
                       on_click=lambda: st.session_state.update(recent=st.session_state["recent"][1:]))
