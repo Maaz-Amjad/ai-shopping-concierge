@@ -329,16 +329,17 @@ with shop_tab:
             recent = [q for q in st.session_state.get("recent", []) if q != query.strip()]
             st.session_state["recent"] = [query.strip()] + recent[:MAX_RECENT - 1]   # this browser session only
 
-    if st.session_state.get("recent"):                  # the session's searches, newest first; a click searches again,
-        cols = st.columns([1] + [3, 0.6] * MAX_RECENT, vertical_alignment="center")   # its ✕ removes it
-        cols[0].caption("Recent:")
-        for i, text in enumerate(st.session_state["recent"]):
-            cols[1 + 2 * i].button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
-                                   use_container_width=True,
-                                   on_click=lambda t=text: st.session_state.update(query=t))
-            cols[2 + 2 * i].button("✕", key=f"forget-{i}", help="Remove from recent searches",
-                                   on_click=lambda t=text: st.session_state.update(
-                                       recent=[q for q in st.session_state["recent"] if q != t]))
+    if st.session_state.get("recent"):                  # the session's searches, newest first: ✕ removes one, a click
+        with st.container(horizontal=True, vertical_alignment="center", gap="small", wrap=True):   # searches again
+            st.caption("Recent:")
+            for i, text in enumerate(st.session_state["recent"]):
+                with st.container(horizontal=True, vertical_alignment="center", gap=None, width="content"):
+                    st.button("", key=f"forget-{i}", icon=":material/close:", type="tertiary", width="content",
+                              help="Remove from recent searches",
+                              on_click=lambda t=text: st.session_state.update(
+                                  recent=[q for q in st.session_state["recent"] if q != t]))
+                    st.button(text if len(text) <= 40 else text[:39] + "…", key=f"recent-{i}", help=text,
+                              width="content", on_click=lambda t=text: st.session_state.update(query=t))
 
     result = st.session_state.get("result")
     if not result:                                      # first visit: how to get good results
