@@ -301,7 +301,7 @@ def test_recent_searches_are_listed_under_the_box_and_search_again(tmp_path, mon
     assert [b.label for b in at.button if b.key and b.key.startswith("recent-")] == ["ice maker", "range hood"]
 
 
-def test_a_recent_search_can_be_removed_with_its_cross(tmp_path, monkeypatch):
+def test_one_cross_removes_recent_searches_one_by_one(tmp_path, monkeypatch):
     p1 = json.dumps({"semantic_query": "ice maker", "category": "Ice Makers"})
     p2 = json.dumps({"semantic_query": "range hood"})
     at = shop_app(tmp_path, monkeypatch, [p1, gen(["A", "B"]), p2, gen(["C"], "One hood.")])
@@ -309,10 +309,11 @@ def test_a_recent_search_can_be_removed_with_its_cross(tmp_path, monkeypatch):
     at.text_input(key="query").set_value("range hood").run()
     labels = lambda: [b.label for b in at.button if b.key and b.key.startswith("recent-")]   # noqa: E731
     assert labels() == ["range hood", "ice maker"]
-    at.button(key="forget-1").click().run()                                       # the cross next to "ice maker"
-    assert not at.exception
-    assert labels() == ["range hood"]
+    at.button(key="forget_recent").click().run()                                   # removes the newest
+    assert not at.exception and labels() == ["ice maker"]
     assert at.text_input(key="query").value == "range hood" and cards_shown(at)   # no new search, results kept
+    at.button(key="forget_recent").click().run()                                   # then the next one
+    assert labels() == [] and "forget_recent" not in [b.key for b in at.button]
 
 
 def test_active_limits_are_shown_and_can_be_cleared(tmp_path, monkeypatch):
