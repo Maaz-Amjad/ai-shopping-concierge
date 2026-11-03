@@ -402,3 +402,87 @@ def test_a_config_change_reaches_the_running_app_without_a_restart(tmp_path, mon
     at.button(key="clear_query").click().run()
     at.text_input(key="query").set_value("potato peeler").run()
     assert not at.exception and at.warning and "may not carry" in at.warning[0].value
+
+
+# ---- verifier review (3 Nov, after the deploy) ------------------------------------------------------------------
+
+def test_an_old_config_copy_is_dropped_when_the_config_changes(tmp_path, monkeypatch):
+    # every config change kept another full copy (model, catalog, embeddings) in memory, up to max_entries
+    import src
+    from src import data, pipeline, store
+    from test_pipeline import CFG
+
+    base = resources(tmp_path, [])
+    loads, config = [], {**CFG, "app": {}}
+    monkeypatch.setattr(src, "load_config", lambda: config)
+    monkeypatch.setattr(pipeline, "load_resources", lambda cfg, *a, **k: loads.append(cfg) or replace(base, cfg=cfg))
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    config = {**CFG, "app": {"weak_match_below": 0.7}}
+    at.run()
+    config = {**CFG, "app": {}}                                  # back to the first config: its copy was dropped
+    at.run()
+    assert not at.exception and len(loads) == 3
+
+
+def test_recent_search_labels_show_the_text_as_typed(tmp_path, monkeypatch):
+    # "$20 and $40" was rendered as a LaTeX span in the button label
+    parsed = json.dumps({"semantic_query": "filter", "min_price": 20, "max_price": 40})
+    at = shop_app(tmp_path, monkeypatch, [parsed, gen(["A"])])
+    at.text_input(key="query").set_value("filter between $20 and $40").run()
+    label = at.button(key="recent-0").label
+    assert "\$20" in label and "\$40" in label                  # escaped, so shown literally
+
+
+def test_a_category_not_in_the_new_shop_is_reset_and_not_shown_as_active(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+
+    demo = resources(tmp_path, [])
+    other = replace(demo, catalog=demo.catalog.assign(category="Range Hoods"))
+    other = replace(other, meta=pipeline.CatalogMeta.from_catalog(other.catalog))
+    (tmp_path / "stores" / "shop1").mkdir(parents=True)
+    monkeypatch.setattr(store, "STORES_DIR", tmp_path / "stores")
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, store=None, **k: other if store else demo)
+    monkeypatch.setattr(store, "list_stores", lambda: ["shop1"])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.sidebar.selectbox(key="f_cat").select("Ice Makers").run()
+    at.sidebar.selectbox(key="store_choice").select("shop1").run()        # shop1 has no Ice Makers
+    assert not at.exception and at.session_state["f_cat"] == "Any"
+    assert "clear_limits" not in [b.key for b in at.button]
+    assert not at.sidebar.expander[0].proto.expanded                      # nothing set: stays closed
+
+
+def test_similar_titles_end_in_an_ellipsis_only_when_cut(tmp_path, monkeypatch):
+    parsed = json.dumps({"semantic_query": "ice maker"})
+    at = shop_app(tmp_path, monkeypatch, [parsed, gen(["A", "B"])])
+    at.text_input(key="query").set_value("ice maker").run()
+    similar = " ".join(c.value for c in at.caption if "Similar:" in c.value)
+    assert "ice maker b" in similar
+    assert "ice maker b…" not in similar and "hood c…" not in similar      # short titles are not marked as cut
+
+
+def test_chat_says_when_the_store_may_not_carry_the_request(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+    from test_agent import agent_res
+
+    res = agent_res(tmp_path, [{"name": "search", "args": {"request": "potato peeler", "category": "Range Hoods"}}],
+                    [gen(["C"], "One hood.")])
+    res.cfg = {**res.cfg, "app": {"weak_match_below": 0.7}}
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    at.chat_input[0].set_value("potato peeler").run()
+    assert not at.exception
+    assert at.session_state["chat_log"][-1]["text"].startswith("I may not have what you're looking for")
