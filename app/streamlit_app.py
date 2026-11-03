@@ -38,6 +38,8 @@ DEMO = "Demo appliance store"
 EXAMPLES = ["quiet portable countertop ice maker under $150", "refrigerator water filter, not Samsung",
             "something to stop my dryer from squeaking", "genuine GE brand refrigerator water filter",
             "LG freezer under $50"]
+CHAT_EXAMPLES = ["a quiet ice maker for my kitchen", "water filter for a Samsung fridge, under $40",
+                 "range hood, not stainless steel"]
 FORMAT_NAMES = {"shopify": "Shopify product export", "shopify_json": "Shopify store data",
                 "woocommerce": "WooCommerce product export", "generic": "standard product list"}
 FIELD_QUESTIONS = {"product_id": "Which column is the product's code or ID?", "title": "Which column is the product name?",
@@ -248,7 +250,14 @@ with chat_tab:
         st.rerun()
     if not st.session_state["chat_log"]:
         with st.chat_message("assistant"):
-            st.markdown("Hi! What are you shopping for today?")
+            st.markdown("Hi! What are you shopping for today? Tell me what you need, your budget and anything to "
+                        "avoid; then refine with things like *cheaper*, *only GE* or *compare 1 and 2*."
+                        + ("\n\nI'm in **basic mode**: I search by meaning and the card buttons work. Add your own AI "
+                           "key on the left and I'll also read your limits and write the answers." if basic else ""))
+            st.caption("Or start with one of these:")
+            for i, (col, example) in enumerate(zip(st.columns(len(CHAT_EXAMPLES)), CHAT_EXAMPLES)):
+                col.button(example, key=f"chat-example-{i}", use_container_width=True,
+                           on_click=lambda text=example: st.session_state.update(chat_pending=text))
     for i, entry in enumerate(st.session_state["chat_log"]):
         with st.chat_message(entry["role"]):
             st.markdown(md(entry["text"]))
@@ -278,7 +287,7 @@ with chat_tab:
             for j, pid in enumerate(shortlist, start=1):
                 row = res.catalog[res.catalog["product_id"] == pid].iloc[0]
                 st.markdown(f"{j}. {md(str(row['title'])[:90])} — {money(None if pd.isna(row['price']) else row['price'])}")
-    message = st.chat_input("Message the shopping assistant")
+    message = st.chat_input("Message the shopping assistant") or st.session_state.pop("chat_pending", None)
     if message:
         st.session_state["chat_log"].append({"role": "user", "text": message})
         with st.spinner("Thinking…"):
@@ -332,6 +341,14 @@ with shop_tab:
                                        recent=[q for q in st.session_state["recent"] if q != t]))
 
     result = st.session_state.get("result")
+    if not result:                                      # first visit: how to get good results
+        with st.container(border=True):
+            st.markdown("**How to get good results**  \n"
+                        "1. **Say what it is** and what matters: *quiet*, *for a small kitchen*, *fits a GE fridge*.  \n"
+                        "2. **Add your limits**: a budget (*under $100*), a brand, or something to avoid "
+                        "(*not stainless*)" + (", using *Narrow it down* on the left in basic mode" if basic else "")
+                        + ".  \n"
+                        "3. **Pick a shopper** on the left to see results that also fit past purchases.")
     if result:
         pq, flags = result["parsed"], result["flags"]
         limits = understood(pq)
@@ -343,6 +360,9 @@ with shop_tab:
                        "while a price limit is set.")
 
         st.info(md(result["answer"]))
+        if not result["products"]:
+            st.caption("💡 Nothing matched every limit. Try removing one (the answer above suggests which), or "
+                       "describe the product in other words.")
 
         if result["products"]:
             for p in result["products"]:

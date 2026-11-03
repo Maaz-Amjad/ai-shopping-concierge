@@ -323,3 +323,24 @@ def test_active_limits_are_shown_and_can_be_cleared(tmp_path, monkeypatch):
     at.button(key="clear_limits").click().run()
     assert not at.exception
     assert at.sidebar.number_input(key="f_max").value == 0.0 and "clear_limits" not in [b.key for b in at.button]
+
+
+def test_first_visit_guidance_and_chat_example_buttons(tmp_path, monkeypatch):
+    from src import data, pipeline, store
+    from test_agent import agent_res
+
+    res = agent_res(tmp_path, [{"name": "search", "args": {"request": "a quiet ice maker for my kitchen"}}],
+                    [gen(["A", "B"])])
+    monkeypatch.setattr(pipeline, "load_resources", lambda *a, **k: res)
+    monkeypatch.setattr(store, "list_stores", lambda: [])
+    monkeypatch.setattr(data, "load_interactions", lambda: pd.DataFrame(
+        {"user_id": ["u_lg"] * 10, "product_id": ["B"] * 10, "rating": 5.0, "timestamp": range(10)}))
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    at = AppTest.from_file("../app/streamlit_app.py", default_timeout=60).run()
+    assert any("How to get good results" in m.value for m in at.markdown)          # Shop: shown before a search
+    at.button(key="chat-example-0").click().run()                                   # Chat: one click sends it
+    assert not at.exception
+    assert at.session_state["chat_log"][0] == {"role": "user", "text": "a quiet ice maker for my kitchen"}
+    assert any(m.value.startswith("**1. ice maker a**") for m in at.markdown)
+    assert "chat-example-0" not in [b.key for b in at.button]                       # examples only on a new chat
